@@ -2,17 +2,42 @@ package handler
 
 import (
 	"errors"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"url-shortener/internal/model"
-	"url-shortener/internal/repository"
-	"url-shortener/internal/service"
-
-	"github.com/stretchr/testify/assert"
 )
+
+type MockService struct{}
+
+func (m *MockService) ShortenURL(original string) (*model.URL, error) {
+	return &model.URL{
+		ID:       "abc123",
+		Original: original,
+		Short:    "http://localhost:8080/abc123",
+	}, nil
+}
+
+func (m *MockService) GetOriginalURL(id string) (string, error) {
+	if id == "nonexistent" {
+		return "", errors.New("not found")
+	}
+	return "https://example.com", nil
+}
+
+func setupGinRouter(handler *Handlers) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	router.POST("/", handler.ShortenURL)
+	router.GET("/:id", handler.GetOriginalURL)
+
+	return router
+}
 
 func TestShortenURL(t *testing.T) {
 	type want struct {
@@ -37,7 +62,7 @@ func TestShortenURL(t *testing.T) {
 			},
 			want: want{
 				statusCode: http.StatusBadRequest,
-				body:       "Invalid content type\n",
+				body:       `{"error":"Invalid content type"}`,
 			},
 		},
 		{
@@ -49,29 +74,17 @@ func TestShortenURL(t *testing.T) {
 			},
 			want: want{
 				statusCode: http.StatusBadRequest,
-				body:       "URL cannot be empty\n",
-			},
-		},
-		{
-			name:   "invalid method GET",
-			method: "GET",
-			body:   "https://example.com",
-			headers: map[string]string{
-				"Content-Type": "text/plain",
-			},
-			want: want{
-				statusCode: http.StatusBadRequest,
-				body:       "Method not allowed\n",
+				body:       `{"error":"URL cannot be empty"}`,
 			},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// Используем реальные зависимости (проще для начала)
-			repo := repository.NewInMemoryURLRepository()
-			service := service.NewURLService(repo, "http://localhost:8080")
-			handler := NewHandler(service)
+			mockService := &MockService{}
+			handler := NewHandler(mockService)
+
+			router := setupGinRouter(handler)
 
 			req := httptest.NewRequest(test.method, "/", strings.NewReader(test.body))
 			for key, value := range test.headers {
@@ -79,43 +92,21 @@ func TestShortenURL(t *testing.T) {
 			}
 
 			w := httptest.NewRecorder()
-			handler.ShortenURL(w, req)
+
+			router.ServeHTTP(w, req)
 
 			result := w.Result()
 			defer result.Body.Close()
 
-			// Проверка статус кода
 			assert.Equal(t, test.want.statusCode, result.StatusCode)
 
-			// Проверка Content-Type
-			assert.NotContains(t, test.want.contentType, result.Header.Get("Content-Type"))
-
-			// Проверка тела ответа
 			bodyResult, err := io.ReadAll(result.Body)
-			if err != nil {
-				t.Fatalf("error reading response body: %v", err)
-			}
-			bodyStr := string(bodyResult)
-			assert.Contains(t, test.want.body, bodyStr)
+			assert.NoError(t, err)
+
+			bodyStr := strings.TrimSpace(string(bodyResult))
+			assert.Equal(t, test.want.body, bodyStr)
 		})
 	}
-}
-
-type MockService struct{}
-
-func (m *MockService) ShortenURL(original string) (*model.URL, error) {
-	return &model.URL{
-		ID:       "abc123",
-		Original: original,
-		Short:    "http://localhost:8080/abc123",
-	}, nil
-}
-
-func (m *MockService) GetOriginalURL(id string) (string, error) {
-	if id == "nonexistent" {
-		return "", errors.New("not found")
-	}
-	return "https://example.com", nil
 }
 
 func TestShortenUrlMoke(t *testing.T) {
@@ -162,33 +153,30 @@ func TestShortenUrlMoke(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// Мокаем сервис
 			mockService := &MockService{}
 			h := NewHandler(mockService)
 
-			// Создаём запрос
+			router := setupGinRouter(h)
+
 			req := httptest.NewRequest(test.method, "/", strings.NewReader(test.body))
 			for k, v := range test.headers {
 				req.Header.Set(k, v)
 			}
 
-			// Записываем ответ
 			w := httptest.NewRecorder()
-			h.ShortenURL(w, req)
+
+			router.ServeHTTP(w, req)
 
 			res := w.Result()
 			defer res.Body.Close()
 
-			// Проверка статус кода
 			assert.Equal(t, test.want.statusCode, res.StatusCode)
 
-			// Проверка Content-Type (если ожидается)
 			assert.Equal(t, test.want.contentType, res.Header.Get("Content-Type"))
 
-			// Проверка тела
 			bodyBytes, _ := io.ReadAll(res.Body)
 			bodyStr := strings.TrimSpace(string(bodyBytes))
-			assert.Contains(t, test.want.body, bodyStr)
+			assert.Equal(t, test.want.body, bodyStr)
 		})
 	}
 }
@@ -197,6 +185,7 @@ func TestGetOriginalURL(t *testing.T) {
 	type want struct {
 		statusCode int
 		location   string
+		body       string
 	}
 
 	tests := []struct {
@@ -212,6 +201,7 @@ func TestGetOriginalURL(t *testing.T) {
 			want: want{
 				statusCode: http.StatusTemporaryRedirect,
 				location:   "https://example.com",
+				body:       "https://example.com",
 			},
 		},
 		{
@@ -220,7 +210,7 @@ func TestGetOriginalURL(t *testing.T) {
 			url:    "/nonexistent",
 			want: want{
 				statusCode: http.StatusBadRequest,
-				location:   "",
+				body:       `{"error":"Invalid server error"}`,
 			},
 		},
 		{
@@ -228,27 +218,23 @@ func TestGetOriginalURL(t *testing.T) {
 			method: "POST",
 			url:    "/abc123",
 			want: want{
-				statusCode: http.StatusBadRequest,
-				location:   "",
+				statusCode: http.StatusNotFound,
+				body:       "404 page not found",
 			},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// Мокаем сервис
 			mockService := &MockService{}
 			h := NewHandler(mockService)
 
-			mux := http.NewServeMux()
-			mux.HandleFunc("/{id}", h.GetOriginalURL)
+			router := setupGinRouter(h)
 
-			// Создаём запрос
 			req := httptest.NewRequest(test.method, test.url, nil)
-
-			// Записываем ответ
 			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, req)
+
+			router.ServeHTTP(w, req)
 
 			res := w.Result()
 			defer res.Body.Close()
@@ -256,8 +242,15 @@ func TestGetOriginalURL(t *testing.T) {
 			// Проверка статус кода
 			assert.Equal(t, test.want.statusCode, res.StatusCode)
 
-			// Проверка ответа
-			assert.Equal(t, test.want.location, res.Header.Get("Location"))
+			if test.want.location != "" {
+				assert.Equal(t, test.want.location, res.Header.Get("Location"))
+			}
+
+			bodyBytes, _ := io.ReadAll(res.Body)
+			bodyStr := strings.TrimSpace(string(bodyBytes))
+			if test.want.body != "" {
+				assert.Equal(t, test.want.body, bodyStr)
+			}
 		})
 	}
 }

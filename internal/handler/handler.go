@@ -1,8 +1,7 @@
 package handler
 
 import (
-	"io"
-	"net/http"
+	"github.com/gin-gonic/gin"
 	"strings"
 	"url-shortener/internal/service"
 )
@@ -15,64 +14,55 @@ func NewHandler(service service.URLServiceI) *Handlers {
 	return &Handlers{service: service}
 }
 
-func (h *Handlers) ShortenURL(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusBadRequest)
+func (h *Handlers) ShortenURL(c *gin.Context) {
+
+	if !strings.Contains(c.ContentType(), "text/plain") {
+		c.JSON(400, gin.H{"error": "Invalid content type"})
 		return
 	}
 
-	if !strings.Contains(r.Header.Get("Content-Type"), "text/plain") {
-		http.Error(w, "Invalid content type", http.StatusBadRequest)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
+	body, err := c.GetRawData()
 	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		c.JSON(400, gin.H{"error": "Invalid request body"})
 		return
 	}
-	defer r.Body.Close()
 
 	originalURL := strings.TrimSpace(string(body))
 	if originalURL == "" {
-		http.Error(w, "URL cannot be empty", http.StatusBadRequest)
+		c.JSON(400, gin.H{"error": "URL cannot be empty"})
 		return
 	}
 
 	url, err := h.service.ShortenURL(originalURL)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusBadRequest)
+		c.JSON(400, gin.H{"error": "Internal server error"})
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(url.Short))
+	c.Header("Content-Type", "text/plain")
+	c.String(201, url.Short)
 }
 
-func (h *Handlers) GetOriginalURL(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusBadRequest)
-		return
-	}
+func (h *Handlers) GetOriginalURL(c *gin.Context) {
 
-	id := r.PathValue("id")
+	id := c.Param("id")
 	if id == "" {
-		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		c.JSON(400, gin.H{"error": "Invalid id"})
 		return
 	}
 
 	originalURL, err := h.service.GetOriginalURL(id)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusBadRequest)
+		c.JSON(400, gin.H{"error": "Invalid server error"})
 		return
 	}
 
 	if originalURL == "" {
-		http.Error(w, "URL not found", http.StatusBadRequest)
+		c.JSON(400, gin.H{"error": "Url not found"})
 		return
 	}
 
-	w.Header().Set("Location", originalURL)
-	w.WriteHeader(http.StatusTemporaryRedirect)
+	c.Header("Location", originalURL)
+	// если я правильно понял задания и здесь не нужен c.Redirect
+	c.String(307, originalURL)
 }

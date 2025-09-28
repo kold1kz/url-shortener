@@ -1,13 +1,13 @@
 package main
 
 import (
-	"log"
-	"net/http"
+	"github.com/gin-gonic/gin"
 	"url-shortener/internal/handler"
 	"url-shortener/internal/repository"
 	"url-shortener/internal/service"
 )
 
+// так как я мало что знаю в go испольщовал deepsek для помоши и объяснений
 func main() {
 	// Инициализация зависимостей
 	repo := repository.NewInMemoryURLRepository()
@@ -15,30 +15,13 @@ func main() {
 	handlers := handler.NewHandler(urlService)
 
 	// Настройка маршрутов
-	mux := http.NewServeMux()
+	router := gin.Default()
 
 	// Регистрируем обработчики
-	mux.HandleFunc("POST /", handlers.ShortenURL)
-	mux.HandleFunc("GET /{id}", handlers.GetOriginalURL)
-
-	// Обработка несуществующих путей
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.Error(w, "Not found", http.StatusBadRequest)
-			return
-		}
-		http.Error(w, "Method not allowed", http.StatusBadRequest)
-	})
-
-	// Настройка сервера
-	server := &http.Server{
-		Addr:    ":8080",
-		Handler: mux,
-	}
+	router.POST("/", handlers.ShortenURL)       // Изменим сигнатуру
+	router.GET("/:id", handlers.GetOriginalURL) // Изменим сигнатуру
 
 	// Запуск сервера
 	//log.Println("Server starting on http://localhost:8080")
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatal("Server failed to start:", err)
-	}
+	router.Run(":8080")
 }
