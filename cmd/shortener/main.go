@@ -2,6 +2,8 @@ package main
 
 import (
 	"github.com/gin-gonic/gin"
+	"log"
+	"url-shortener/internal/config"
 	"url-shortener/internal/handler"
 	"url-shortener/internal/repository"
 	"url-shortener/internal/service"
@@ -9,9 +11,15 @@ import (
 
 // так как я мало что знаю в go испольщовал deepsek для помоши и объяснений
 func main() {
+	cfg := config.Init()
+
+	// Проверяем корректность конфигурации
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	// Инициализация зависимостей
 	repo := repository.NewInMemoryURLRepository()
-	urlService := service.NewURLService(repo, "http://localhost:8080")
+	urlService := service.NewURLService(repo, cfg.BaseURL)
 	handlers := handler.NewHandler(urlService)
 
 	// Настройка маршрутов
@@ -22,6 +30,6 @@ func main() {
 	router.GET("/:id", handlers.GetOriginalURL) // Изменим сигнатуру
 
 	// Запуск сервера
-	//log.Println("Server starting on http://localhost:8080")
-	router.Run(":8080")
+	// log.Printf("Server starting on %s", cfg.ServerAddress)
+	router.Run(cfg.ServerAddress)
 }
