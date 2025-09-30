@@ -9,14 +9,18 @@ import (
 	"url-shortener/internal/service"
 )
 
-// так как я мало что знаю в go испольщовал deepsek для помоши и объяснений
-func main() {
+func loadConfig() *config.Config {
 	cfg := config.Init()
 
 	// Проверяем корректность конфигурации
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
+	return cfg
+}
+
+func main() {
+	cfg := loadConfig()
 	// Инициализация зависимостей
 	repo := repository.NewInMemoryURLRepository()
 	urlService := service.NewURLService(repo, cfg.BaseURL)

@@ -209,7 +209,7 @@ func TestGetOriginalURL(t *testing.T) {
 			method: "GET",
 			url:    "/nonexistent",
 			want: want{
-				statusCode: http.StatusBadRequest,
+				statusCode: http.StatusInternalServerError,
 				body:       `{"error":"Invalid server error"}`,
 			},
 		},

@@ -35,7 +35,7 @@ func (h *Handlers) ShortenURL(c *gin.Context) {
 
 	url, err := h.service.ShortenURL(originalURL)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "Internal server error"})
+		c.JSON(500, gin.H{"error": "Internal server error"})
 		return
 	}
 
@@ -53,12 +53,12 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 
 	originalURL, err := h.service.GetOriginalURL(id)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "Invalid server error"})
+		c.JSON(500, gin.H{"error": "Invalid server error"})
 		return
 	}
 
 	if originalURL == "" {
-		c.JSON(400, gin.H{"error": "Url not found"})
+		c.JSON(404, gin.H{"error": "Url not found"})
 		return
 	}
 
