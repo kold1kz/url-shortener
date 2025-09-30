@@ -7,30 +7,37 @@ import (
 	"url-shortener/internal/repository"
 )
 
-type URLServiceI interface {
+type URLService interface {
 	ShortenURL(original string) (*model.URL, error)
 	GetOriginalURL(id string) (string, error)
 }
-type URLService struct {
+type URLServiceImpl struct {
 	repo    repository.URLRepository
 	baseURL string
 }
 
-func NewURLService(repo repository.URLRepository, baseURL string) *URLService {
-	return &URLService{
+func NewURLService(repo repository.URLRepository, baseURL string) *URLServiceImpl {
+	return &URLServiceImpl{
 		repo:    repo,
 		baseURL: baseURL,
 	}
 }
 
-func (s *URLService) ShortenURL(originalURL string) (*model.URL, error) {
+func (s *URLServiceImpl) ShortenURL(originalURL string) (*model.URL, error) {
 
 	existingURL, _ := s.repo.FindByOriginalURL(originalURL)
 	if existingURL != nil {
 		return existingURL, nil
 	}
 
-	id := generateID(10)
+	var id string
+	for {
+		id = generateID(10)
+		u, _ := s.repo.FindByID(id)
+		if u == nil {
+			break
+		}
+	}
 
 	url := &model.URL{
 		ID:       id,
@@ -38,15 +45,14 @@ func (s *URLService) ShortenURL(originalURL string) (*model.URL, error) {
 		Short:    s.baseURL + "/" + id,
 	}
 
-	err := s.repo.Create(url)
-	if err != nil {
+	if err := s.repo.Create(url); err != nil {
 		return nil, err
 	}
 
 	return url, nil
 }
 
-func (s *URLService) GetOriginalURL(id string) (string, error) {
+func (s *URLServiceImpl) GetOriginalURL(id string) (string, error) {
 	url, err := s.repo.FindByID(id)
 	if err != nil {
 		return "", err
@@ -59,6 +65,8 @@ func (s *URLService) GetOriginalURL(id string) (string, error) {
 
 func generateID(length int) string {
 	bytes := make([]byte, length)
-	rand.Read(bytes)
-	return base64.URLEncoding.EncodeToString(bytes)[:length]
+	if _, err := rand.Read(bytes); err != nil {
+		panic(err) // или можно вернуть ошибку выше
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes)[:length]
 }
