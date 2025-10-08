@@ -21,15 +21,15 @@ func loadConfig() *config.Config {
 	return cfg
 }
 
-func initLogger() *zap.Logger {
-	logger, err := zap.NewDevelopmen()
+func initLogger() *zap.SugaredLogger {
+	logger, err := zap.NewProduction()
 	if err != nil {
 		log.Printf("Failed to initialize zap logger: %v", err)
-		return zap.NewNop()
+		return zap.NewNop().Sugar()
 	}
 
 	logger = logger.WithOptions(zap.IncreaseLevel(zap.InfoLevel))
-	return logger
+	return logger.Sugar()
 }
 
 func main() {
@@ -57,7 +57,7 @@ func main() {
 	router.Run(cfg.ServerAddress)
 }
 
-func httpLoggerMiddleware(logger *zap.Logger) gin.HandlerFunc {
+func httpLoggerMiddleware(logger *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Начало запроса - засекаем время
 		start := time.Now()
@@ -68,17 +68,15 @@ func httpLoggerMiddleware(logger *zap.Logger) gin.HandlerFunc {
 		// Вычисляем затраченное время
 		duration := time.Since(start)
 
-		// Получаем размер содержимого ответа
+		// Читаем размер содержимого ответа
 		size := c.Writer.Size()
-		if size < 0 {
-			size = 0
-		}
 
-		// Логируем все на уровне Info
-		logger.Info("HTTP Request",
-			zap.String("url", c.Request.RequestURL),
+		logger.Infow("HTTP Request",
+			zap.String("url", c.Request.RequestURI),
 			zap.String("method", c.Request.Method),
 			zap.Duration("duration", duration),
+		)
+		logger.Infow("HTTP Response",
 			zap.Int("status", c.Writer.Status()),
 			zap.Int("size", size),
 		)

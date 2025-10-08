@@ -7,5 +7,5 @@ test:
 	go test -v ./...
 
 build:
-	go build -o shortener *.go
+	go build -o shortener ./cmd/shortener/main.go
 	./shortenertest -test.v -test.run=^TestIteration1$ -binary-path=cmd/shortener/shortener
