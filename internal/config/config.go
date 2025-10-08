@@ -14,19 +14,18 @@ type Config struct {
 func Init() *Config {
 	cfg := &Config{}
 
-	defaultServerAddress := os.Getenv("SERVER_ADDRESS")
-	if defaultServerAddress == "" {
-		defaultServerAddress = "localhost:8080"
-	}
-
-	defaultBaseURL := os.Getenv("BASE_URL")
-	if defaultBaseURL == "" {
-		defaultBaseURL = "http://localhost:8080"
-	}
-	flag.StringVar(&cfg.ServerAddress, "a", defaultServerAddress, "HTTP server address")
-	flag.StringVar(&cfg.BaseURL, "b", defaultBaseURL, "Base URL for short links")
+	flag.StringVar(&cfg.ServerAddress, "a", "localhost:8080", "HTTP server address")
+	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "Base URL for short links")
 
 	flag.Parse()
+
+	if envServer := os.Getenv("SERVER_ADDRESS"); envServer != "" {
+		cfg.ServerAddress = envServer
+	}
+
+	if envBaseURL := os.Getenv("BASE_URL"); envBaseURL != "" {
+		cfg.BaseURL = envBaseURL
+	}
 
 	return cfg
 }
