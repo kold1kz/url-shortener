@@ -30,10 +30,10 @@ func main() {
 	router := gin.Default()
 
 	// Регистрируем обработчики
-	router.POST("/", handlers.ShortenURL)       // Изменим сигнатуру
-	router.GET("/:id", handlers.GetOriginalURL) // Изменим сигнатуру
+	router.POST("/", handlers.ShortenURL)
+	router.GET("/:id", handlers.GetOriginalURL)
 
 	// Запуск сервера
-	// log.Printf("Server starting on %s", cfg.ServerAddress)
+	//log.Printf("Server starting on %s %s", cfg.BaseURL, cfg.ServerAddress)
 	router.Run(cfg.ServerAddress)
 }
