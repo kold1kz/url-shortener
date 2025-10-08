@@ -2,7 +2,9 @@ package main
 
 import (
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"log"
+	"time"
 	"url-shortener/internal/config"
 	"url-shortener/internal/handler"
 	"url-shortener/internal/repository"
@@ -19,8 +21,23 @@ func loadConfig() *config.Config {
 	return cfg
 }
 
+func initLogger() *zap.Logger {
+	logger, err := zap.NewDevelopmen()
+	if err != nil {
+		log.Printf("Failed to initialize zap logger: %v", err)
+		return zap.NewNop()
+	}
+
+	logger = logger.WithOptions(zap.IncreaseLevel(zap.InfoLevel))
+	return logger
+}
+
 func main() {
 	cfg := loadConfig()
+
+	logger := initLogger()
+	defer logger.Sync()
+
 	// Инициализация зависимостей
 	repo := repository.NewInMemoryURLRepository()
 	urlService := service.NewURLService(repo, cfg.BaseURL)
@@ -29,6 +46,8 @@ func main() {
 	// Настройка маршрутов
 	router := gin.Default()
 
+	router.Use(httpLoggerMiddleware(logger))
+
 	// Регистрируем обработчики
 	router.POST("/", handlers.ShortenURL)       // Изменим сигнатуру
 	router.GET("/:id", handlers.GetOriginalURL) // Изменим сигнатуру
@@ -36,4 +55,32 @@ func main() {
 	// Запуск сервера
 	// log.Printf("Server starting on %s", cfg.ServerAddress)
 	router.Run(cfg.ServerAddress)
+}
+
+func httpLoggerMiddleware(logger *zap.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Начало запроса - засекаем время
+		start := time.Now()
+
+		// Обрабатываем запрос
+		c.Next()
+
+		// Вычисляем затраченное время
+		duration := time.Since(start)
+
+		// Получаем размер содержимого ответа
+		size := c.Writer.Size()
+		if size < 0 {
+			size = 0
+		}
+
+		// Логируем все на уровне Info
+		logger.Info("HTTP Request",
+			zap.String("url", c.Request.RequestURL),
+			zap.String("method", c.Request.Method),
+			zap.Duration("duration", duration),
+			zap.Int("status", c.Writer.Status()),
+			zap.Int("size", size),
+		)
+	}
 }
