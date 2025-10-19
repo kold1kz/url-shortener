@@ -69,7 +69,7 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 	c.String(http.StatusTemporaryRedirect, originalURL)
 }
 
-func (h *Handlers) ShortenJsonUrl(c *gin.Context) {
+func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 	if c.ContentType() != "application/json" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
 		return

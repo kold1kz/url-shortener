@@ -35,7 +35,7 @@ func setupGinRouter(handler *Handlers) *gin.Engine {
 
 	router.POST("/", handler.ShortenURL)
 	router.GET("/:id", handler.GetOriginalURL)
-	router.POST("/api/shorten", handler.ShortenJsonUrl)
+	router.POST("/api/shorten", handler.ShortenJSONUrl)
 
 	return router
 }
