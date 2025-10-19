@@ -51,6 +51,8 @@ func main() {
 	// Регистрируем обработчики
 	router.POST("/", handlers.ShortenURL)
 	router.GET("/:id", handlers.GetOriginalURL)
+	// Регистрируем обработчики JSON
+	router.POST("/api/shorten", handlers.ShortenJsonUrl)
 
 	// Запуск сервера
 	//log.Printf("Server starting on %s %s", cfg.BaseURL, cfg.ServerAddress)

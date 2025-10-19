@@ -35,6 +35,7 @@ func setupGinRouter(handler *Handlers) *gin.Engine {
 
 	router.POST("/", handler.ShortenURL)
 	router.GET("/:id", handler.GetOriginalURL)
+	router.POST("/api/shorten", handler.ShortenJsonUrl)
 
 	return router
 }
@@ -251,6 +252,160 @@ func TestGetOriginalURL(t *testing.T) {
 			if test.want.body != "" {
 				assert.Equal(t, test.want.body, bodyStr)
 			}
+		})
+	}
+}
+
+func TestShortenJsonURL(t *testing.T) {
+	type want struct {
+		contentType string
+		statusCode  int
+		body        string
+	}
+
+	tests := []struct {
+		name    string
+		method  string
+		body    string
+		headers map[string]string
+		want    want
+	}{
+		{
+			name:   "invalid content type",
+			method: "POST",
+			body:   `{"url": "https://example.com"}`,
+			headers: map[string]string{
+				"Content-Type": "text/plain",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid content type"}`,
+			},
+		},
+		{
+			name:   "empty json url",
+			method: "POST",
+			body:   `{"url": ""}`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid JSON format"}`,
+			},
+		},
+		{
+			name:   "invalid url key",
+			method: "POST",
+			body:   `{"urlss": "https://practicum.yandex.ru"}`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid JSON format"}`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockService := &MockService{}
+			handler := NewHandler(mockService)
+
+			router := setupGinRouter(handler)
+
+			req := httptest.NewRequest(test.method, "/api/shorten", strings.NewReader(test.body))
+			for key, value := range test.headers {
+				req.Header.Set(key, value)
+			}
+
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			result := w.Result()
+			defer result.Body.Close()
+
+			assert.Equal(t, test.want.statusCode, result.StatusCode)
+
+			bodyResult, err := io.ReadAll(result.Body)
+			assert.NoError(t, err)
+
+			bodyStr := strings.TrimSpace(string(bodyResult))
+			assert.Equal(t, test.want.body, bodyStr)
+		})
+	}
+}
+
+func TestShortenJsonURLMoke(t *testing.T) {
+	type want struct {
+		contentType string
+		statusCode  int
+		body        string
+	}
+
+	tests := []struct {
+		name    string
+		method  string
+		body    string
+		headers map[string]string
+		want    want
+	}{
+		{
+			name:   "success work shorten url",
+			method: "POST",
+			body:   `{"url": "https://example.com"}`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				contentType: "application/json",
+				statusCode:  http.StatusCreated,
+				body:        `{"result":"http://localhost:8080/abc123"}`,
+			},
+		},
+		{
+			name:   "check content type 2",
+			method: "POST",
+			body:   `{"url": "https://example.com"}`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				contentType: "application/json",
+				statusCode:  http.StatusCreated,
+				body:        `{"result":"http://localhost:8080/abc123"}`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockService := &MockService{}
+			h := NewHandler(mockService)
+
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(test.method, "/api/shorten", strings.NewReader(test.body))
+			for k, v := range test.headers {
+				req.Header.Set(k, v)
+			}
+
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, test.want.statusCode, res.StatusCode)
+
+			assert.Equal(t, test.want.contentType, res.Header.Get("Content-Type"))
+
+			bodyBytes, _ := io.ReadAll(res.Body)
+			bodyStr := strings.TrimSpace(string(bodyBytes))
+			assert.Equal(t, test.want.body, bodyStr)
 		})
 	}
 }
