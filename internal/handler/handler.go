@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strings"
@@ -76,7 +77,17 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 	}
 
 	var req model.ShortenRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	//if err := c.ShouldBindJSON(&req); err != nil {
+	//	c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+	//	return
+	//}
+
+	dec := json.NewDecoder(c.Request.Body)
+	if err := dec.Decode(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+		return
+	}
+	if req.URL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
 		return
 	}
@@ -90,7 +101,14 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 	resp := model.ShortenResponse{
 		Result: url.Short,
 	}
-
 	c.Header("Content-Type", "application/json")
-	c.JSON(http.StatusCreated, resp)
+	c.Status(http.StatusCreated)
+
+	enc := json.NewEncoder(c.Writer)
+	if err := enc.Encode(resp); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode response"})
+		return
+	}
+
+	//c.JSON(http.StatusCreated, resp)
 }
