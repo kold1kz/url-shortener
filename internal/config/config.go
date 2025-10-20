@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"fmt"
+	"os"
 )
 
 type Config struct {
@@ -13,11 +14,18 @@ type Config struct {
 func Init() *Config {
 	cfg := &Config{}
 
-	flag.StringVar(&cfg.ServerAddress, "a", "localhost:8080", "default HTTP server address")
+	flag.StringVar(&cfg.ServerAddress, "a", "localhost:8080", "HTTP server address")
 	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "Base URL for short links")
 
-	// Парсим аргументы командной строки
 	flag.Parse()
+
+	if envServer := os.Getenv("SERVER_ADDRESS"); envServer != "" {
+		cfg.ServerAddress = envServer
+	}
+
+	if envBaseURL := os.Getenv("BASE_URL"); envBaseURL != "" {
+		cfg.BaseURL = envBaseURL
+	}
 
 	return cfg
 }
