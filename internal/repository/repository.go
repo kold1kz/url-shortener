@@ -3,6 +3,7 @@ package repository
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -91,7 +92,8 @@ func (r *FileURLRepository) loadFromFile() error {
 	defer r.mu.Unlock()
 
 	if _, err := os.Stat(r.filePath); os.IsNotExist(err) {
-		return fmt.Errorf("file %s doesn't exist", r.filePath)
+		log.Printf("file %s does not exist", r.filePath)
+		return nil
 	}
 
 	data, err := os.ReadFile(r.filePath)
