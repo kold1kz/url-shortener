@@ -6,7 +6,6 @@ import (
 	"url-shortener/internal/config"
 	"url-shortener/internal/handler"
 	"url-shortener/internal/middleware"
-	"url-shortener/internal/repository"
 	"url-shortener/internal/service"
 )
 
@@ -17,18 +16,20 @@ func loadConfig() *config.Config {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
+	log.Printf("Configuration loaded: %v", cfg)
+
 	return cfg
 }
 
 func main() {
 	cfg := loadConfig()
+	defer cfg.Close()
 
 	logger := middleware.InitLogger()
 	defer logger.Sync()
 
-	// Инициализация зависимостей
-	repo := repository.NewInMemoryURLRepository()
-	urlService := service.NewURLService(repo, cfg.BaseURL)
+	// repo := repository.NewInMemoryURLRepository()
+	urlService := service.NewURLService(cfg.URLRepository, cfg.BaseURL)
 	handlers := handler.NewHandler(urlService)
 
 	// Настройка маршрутов
