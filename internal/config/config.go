@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"os"
 	"url-shortener/internal/repository"
+	"url-shortener/internal/service"
 )
 
 type Config struct {
 	ServerAddress   string
 	BaseURL         string
 	FileStoragePath string
-	URLRepository   repository.URLRepository
+	DatabaseDSN     string
+	URLService      service.URLService // переделать на interface
 }
 
 func Init() *Config {
@@ -20,6 +22,8 @@ func Init() *Config {
 	flag.StringVar(&cfg.ServerAddress, "a", "localhost:8080", "HTTP server address")
 	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "Base URL for short links")
 	flag.StringVar(&cfg.FileStoragePath, "f", "./tmp/shorten_url.json", "File storage path")
+	flag.StringVar(&cfg.DatabaseDSN, "d", "postgres://username:password@localhost:5432/database_name",
+		"Database address")
 	flag.Parse()
 
 	if envServer := os.Getenv("SERVER_ADDRESS"); envServer != "" {
@@ -33,7 +37,11 @@ func Init() *Config {
 	if envFileStorage := os.Getenv("FILE_STORAGE_PATH"); envFileStorage != "" {
 		cfg.FileStoragePath = envFileStorage
 	}
-	cfg.initRepository()
+
+	if envDatabaseDSN := os.Getenv("DATABASE_DSN"); envDatabaseDSN != "" {
+		cfg.DatabaseDSN = envDatabaseDSN
+	}
+	cfg.initService()
 	return cfg
 }
 
@@ -47,22 +55,28 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) initRepository() {
+func (c *Config) initService() {
+	var repo repository.URLRepository
+
 	if c.FileStoragePath != "" {
 		fileRepo, err := repository.NewFileURLRepository(c.FileStoragePath)
 		if err != nil {
-			c.URLRepository = repository.NewInMemoryURLRepository()
+			repo = repository.NewInMemoryURLRepository()
 		} else {
-			c.URLRepository = fileRepo
+			repo = fileRepo
 		}
 	} else {
-		c.URLRepository = repository.NewInMemoryURLRepository()
+		repo = repository.NewInMemoryURLRepository()
 	}
+
+	// 2. Создаем сервис с выбранным репозиторием
+	c.URLService = service.NewURLService(repo, c.BaseURL)
 }
 
 func (c *Config) Close() error {
-	if fileRepo, ok := c.URLRepository.(*repository.FileURLRepository); ok {
-		return fileRepo.Close()
+	// Закрываем репозиторий через сервис (если возможно)
+	if urlService, ok := c.URLService.(interface{ Close() error }); ok {
+		return urlService.Close()
 	}
 	return nil
 }

@@ -87,12 +87,14 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
 		return
 	}
+	// перенести в service
 	if req.URL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
 		return
 	}
 
 	url, err := h.service.ShortenURL(req.URL)
+	// может вернуть 500 если вдруг произойдет какая-то проблемапри сохранение url services 51строка
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
