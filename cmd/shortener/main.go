@@ -28,7 +28,7 @@ func setupDatabase(cfg *config.Config) *database.DB {
 
 	db, err := database.NewDB(cfg.DatabaseDSN)
 	if err != nil {
-		log.Println("Failed to connect to database: %v", err)
+		log.Printf("Failed to connect to database: %v", err)
 	}
 	log.Printf("Connected to PostgreSQL")
 	return db
