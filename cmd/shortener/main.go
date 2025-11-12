@@ -46,8 +46,6 @@ func main() {
 		defer db.Close()
 	}
 
-	// repo := repository.NewInMemoryURLRepository()
-	//urlService := service.NewURLService(cfg.URLService, cfg.BaseURL)
 	handlers := handler.NewHandler(cfg.URLService)
 
 	// Настройка маршрутов

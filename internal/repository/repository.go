@@ -80,7 +80,6 @@ func NewFileURLRepository(filePath string) (*FileURLRepository, error) {
 		filePath:     filePath,
 	}
 
-	// Загружаем данные из файла при инициализации
 	if err := repo.loadFromFile(); err != nil {
 		return nil, fmt.Errorf("failed to load data from file: %w", err)
 	}

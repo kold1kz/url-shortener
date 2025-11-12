@@ -3,7 +3,9 @@ package config
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"url-shortener/internal/database"
 	"url-shortener/internal/repository"
 	"url-shortener/internal/service"
 )
@@ -13,7 +15,7 @@ type Config struct {
 	BaseURL         string
 	FileStoragePath string
 	DatabaseDSN     string
-	URLService      service.URLService // переделать на interface
+	URLService      service.URLService
 }
 
 func Init() *Config {
@@ -58,23 +60,44 @@ func (c *Config) Validate() error {
 func (c *Config) initService() {
 	var repo repository.URLRepository
 
-	if c.FileStoragePath != "" {
-		fileRepo, err := repository.NewFileURLRepository(c.FileStoragePath)
+	if c.DatabaseDSN != "" {
+		db, err := database.NewDB(c.DatabaseDSN)
 		if err != nil {
-			repo = repository.NewInMemoryURLRepository()
+			log.Printf("Failed to connect to PostgreSQL: %v", err)
+			log.Printf("Falling back to file storage")
+
 		} else {
-			repo = fileRepo
+			postgresRepo, err := repository.NewPostgresURLRepository(db.GetDB())
+			if err != nil {
+				log.Printf("Failed to initialize PostgreSQL repository: %v", err)
+				log.Printf("Falling back to file storage")
+			} else {
+				repo = postgresRepo
+				log.Printf("Using PostgreSQL repository")
+			}
 		}
-	} else {
-		repo = repository.NewInMemoryURLRepository()
 	}
 
-	// 2. Создаем сервис с выбранным репозиторием
+	if repo == nil && c.FileStoragePath != "" {
+		fileRepo, err := repository.NewFileURLRepository(c.FileStoragePath)
+		if err != nil {
+			log.Printf("Failed to initialize file repository: %v", err)
+			log.Printf("Falling back to in-memory storage")
+		} else {
+			repo = fileRepo
+			log.Printf("Using file repository: %s", c.FileStoragePath)
+		}
+	}
+
+	if repo == nil {
+		repo = repository.NewInMemoryURLRepository()
+		log.Printf("Using in-memory repository")
+	}
+
 	c.URLService = service.NewURLService(repo, c.BaseURL)
 }
 
 func (c *Config) Close() error {
-	// Закрываем репозиторий через сервис (если возможно)
 	if urlService, ok := c.URLService.(interface{ Close() error }); ok {
 		return urlService.Close()
 	}
