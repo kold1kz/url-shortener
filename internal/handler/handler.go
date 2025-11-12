@@ -115,7 +115,7 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 	resp := model.ShortenResponse{
 		Result: url.Short,
 	}
-	c.Header("Content-Type", "application/plain")
+	c.Header("Content-Type", "application/json")
 	c.Status(http.StatusCreated)
 
 	enc := json.NewEncoder(c.Writer)
