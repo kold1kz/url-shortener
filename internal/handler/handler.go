@@ -42,8 +42,14 @@ func (h *Handlers) ShortenURL(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Type", "text/plain")
-	c.String(http.StatusCreated, url.Short)
+	existingURL, _ := h.service.GetOriginalURL(url.ID)
+	if existingURL == originalURL {
+		c.Header("Content-Type", "text/plain")
+		c.String(http.StatusConflict, url.Short)
+	} else {
+		c.Header("Content-Type", "text/plain")
+		c.String(http.StatusCreated, url.Short)
+	}
 }
 
 func (h *Handlers) GetOriginalURL(c *gin.Context) {
@@ -103,8 +109,14 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 	resp := model.ShortenResponse{
 		Result: url.Short,
 	}
-	c.Header("Content-Type", "application/json")
-	c.Status(http.StatusCreated)
+	existingURL, _ := h.service.GetOriginalURL(url.ID)
+	if existingURL == req.URL {
+		c.Header("Content-Type", "text/plain")
+		c.Status(http.StatusConflict)
+	} else {
+		c.Header("Content-Type", "text/plain")
+		c.Status(http.StatusCreated)
+	}
 
 	enc := json.NewEncoder(c.Writer)
 	if err := enc.Encode(resp); err != nil {

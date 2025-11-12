@@ -50,8 +50,14 @@ func (s *urlService) ShortenURL(originalURL string) (*model.URL, error) {
 		Short:    s.baseURL + "/" + id,
 	}
 
-	if err := s.repo.Create(url); err != nil {
-		return nil, err
+	err = s.repo.Create(url)
+	if err != nil {
+		if repository.IsURLConflictError(err) {
+			if conflictErr, ok := err.(*repository.URLConflictError); ok {
+				return conflictErr.ExistingURL, nil
+			}
+		}
+		return nil, fmt.Errorf("failed to create URL: %w", err)
 	}
 
 	return url, nil

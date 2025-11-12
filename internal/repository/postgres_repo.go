@@ -2,14 +2,20 @@ package repository
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
-	"url-shortener/internal/model"
-
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"url-shortener/internal/model"
 )
 
 type PostgresURLRepository struct {
 	db *sql.DB
+}
+
+type URLConflictError struct {
+	ExistingURL *model.URL
 }
 
 func NewPostgresURLRepository(db *sql.DB) (*PostgresURLRepository, error) {
@@ -43,7 +49,32 @@ func checkTableExists(db *sql.DB) error {
 func (r *PostgresURLRepository) Create(url *model.URL) error {
 	query := `INSERT INTO urls (id, original_url, short_url) VALUES ($1, $2, $3)`
 	_, err := r.db.Exec(query, url.ID, url.Original, url.Short)
-	return err
+	if err != nil {
+		// Проверяем, является ли ошибка нарушением уникальности
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
+			// URL уже существует, находим существующую запись
+			existing, err := r.FindByOriginalURL(url.Original)
+			if err != nil {
+				return fmt.Errorf("failed to find existing URL: %w", err)
+			}
+			if existing != nil {
+				return &URLConflictError{ExistingURL: existing}
+			}
+		}
+		return fmt.Errorf("failed to insert URL: %w", err)
+	}
+
+	return nil
+}
+
+func (e *URLConflictError) Error() string {
+	return "URL already exists"
+}
+
+func IsURLConflictError(err error) bool {
+	_, ok := err.(*URLConflictError)
+	return ok
 }
 
 func (r *PostgresURLRepository) FindByID(id string) (*model.URL, error) {
