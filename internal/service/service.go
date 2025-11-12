@@ -3,6 +3,7 @@ package service
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"url-shortener/internal/model"
 	"url-shortener/internal/repository"
 )
@@ -10,6 +11,7 @@ import (
 type URLService interface {
 	ShortenURL(original string) (*model.URL, error)
 	GetOriginalURL(id string) (string, error)
+	ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error)
 }
 type urlService struct {
 	repo    repository.URLRepository
@@ -72,4 +74,26 @@ func generateID(length int) string {
 		panic(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(bytes)[:length]
+}
+
+func (s *urlService) ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error) {
+	if len(batch) == 0 {
+		return nil, fmt.Errorf("empty batch")
+	}
+
+	responses := make([]model.BatchResponse, 0, len(batch))
+
+	for _, item := range batch {
+		url, err := s.ShortenURL(item.OriginalURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to shorten URL for correlation_id %s: %w", item.CorrelationID, err)
+		}
+
+		responses = append(responses, model.BatchResponse{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      url.Short,
+		})
+	}
+
+	return responses, nil
 }

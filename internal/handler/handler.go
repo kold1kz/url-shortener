@@ -114,3 +114,48 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 
 	//c.JSON(http.StatusCreated, resp)
 }
+
+func (h *Handlers) ShortenURLBatch(c *gin.Context) {
+	// Проверяем Content-Type
+	if c.ContentType() != "application/json" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
+		return
+	}
+
+	var batch []model.BatchRequest
+	if err := c.ShouldBindJSON(&batch); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+		return
+	}
+
+	if len(batch) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Empty batch"})
+		return
+	}
+
+	for _, item := range batch {
+		if item.CorrelationID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+			return
+		}
+		if item.OriginalURL == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+			return
+		}
+	}
+
+	responses, err := h.service.ShortenURLBatch(batch)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URLs"})
+		return
+	}
+
+	c.Header("Content-Type", "application/json")
+	c.Status(http.StatusCreated)
+
+	enc := json.NewEncoder(c.Writer)
+	if err := enc.Encode(responses); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode response"})
+		return
+	}
+}

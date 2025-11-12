@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -13,6 +14,20 @@ import (
 )
 
 type MockService struct{}
+
+type MockServiceWithError struct{}
+
+func (m *MockServiceWithError) ShortenURL(original string) (*model.URL, error) {
+	return nil, errors.New("service error")
+}
+
+func (m *MockServiceWithError) GetOriginalURL(id string) (string, error) {
+	return "", errors.New("service error")
+}
+
+func (m *MockServiceWithError) ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error) {
+	return nil, errors.New("batch processing failed")
+}
 
 func (m *MockService) ShortenURL(original string) (*model.URL, error) {
 	return &model.URL{
@@ -36,8 +51,22 @@ func setupGinRouter(handler *Handlers) *gin.Engine {
 	router.POST("/", handler.ShortenURL)
 	router.GET("/:id", handler.GetOriginalURL)
 	router.POST("/api/shorten", handler.ShortenJSONUrl)
+	router.POST("/api/shorten/batch", handler.ShortenURLBatch)
 
 	return router
+}
+
+func (m *MockService) ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error) {
+	responses := make([]model.BatchResponse, 0, len(batch))
+
+	for _, item := range batch {
+		responses = append(responses, model.BatchResponse{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      "http://localhost:8080/" + item.CorrelationID + "_short",
+		})
+	}
+
+	return responses, nil
 }
 
 func TestShortenURL(t *testing.T) {
@@ -405,6 +434,255 @@ func TestShortenJsonURLMoke(t *testing.T) {
 
 			bodyBytes, _ := io.ReadAll(res.Body)
 			bodyStr := strings.TrimSpace(string(bodyBytes))
+			assert.Equal(t, test.want.body, bodyStr)
+		})
+	}
+}
+
+func TestShortenURLBatch_Success(t *testing.T) {
+	type want struct {
+		contentType string
+		statusCode  int
+		body        string
+	}
+
+	tests := []struct {
+		name    string
+		method  string
+		body    string
+		headers map[string]string
+		want    want
+	}{
+		{
+			name:   "successful batch shortening",
+			method: "POST",
+			body: `[
+				{
+					"correlation_id": "1",
+					"original_url": "https://example.com/page1"
+				},
+				{
+					"correlation_id": "2", 
+					"original_url": "https://example.com/page2"
+				},
+				{
+					"correlation_id": "3",
+					"original_url": "https://example.com/page3"
+				}
+			]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				contentType: "application/json",
+				statusCode:  http.StatusCreated,
+				body: `[
+					{
+						"correlation_id": "1",
+						"short_url": "http://localhost:8080/1_short"
+					},
+					{
+						"correlation_id": "2",
+						"short_url": "http://localhost:8080/2_short"
+					},
+					{
+						"correlation_id": "3", 
+						"short_url": "http://localhost:8080/3_short"
+					}
+				]`,
+			},
+		},
+		{
+			name:   "single item batch",
+			method: "POST",
+			body: `[
+				{
+					"correlation_id": "single",
+					"original_url": "https://example.com/single"
+				}
+			]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				contentType: "application/json",
+				statusCode:  http.StatusCreated,
+				body: `[
+					{
+						"correlation_id": "single",
+						"short_url": "http://localhost:8080/single_short"
+					}
+				]`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockService := &MockService{}
+			h := NewHandler(mockService)
+
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(test.method, "/api/shorten/batch", strings.NewReader(test.body))
+			for k, v := range test.headers {
+				req.Header.Set(k, v)
+			}
+
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, test.want.statusCode, res.StatusCode)
+			assert.Equal(t, test.want.contentType, res.Header.Get("Content-Type"))
+
+			bodyBytes, _ := io.ReadAll(res.Body)
+			bodyStr := strings.TrimSpace(string(bodyBytes))
+
+			// Для JSON сравниваем нормализованные версии
+			var expected, actual []interface{}
+			json.Unmarshal([]byte(test.want.body), &expected)
+			json.Unmarshal([]byte(bodyStr), &actual)
+
+			assert.Equal(t, expected, actual)
+		})
+	}
+}
+
+func TestShortenURLBatch_ValidationErrors(t *testing.T) {
+	type want struct {
+		statusCode int
+		body       string
+	}
+
+	tests := []struct {
+		name    string
+		method  string
+		body    string
+		headers map[string]string
+		want    want
+	}{
+		{
+			name:   "invalid content type",
+			method: "POST",
+			body: `[
+				{
+					"correlation_id": "1",
+					"original_url": "https://example.com/page1"
+				}
+			]`,
+			headers: map[string]string{
+				"Content-Type": "text/plain",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid content type"}`,
+			},
+		},
+		{
+			name:   "empty batch",
+			method: "POST",
+			body:   `[]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Empty batch"}`,
+			},
+		},
+		{
+			name:   "empty correlation_id",
+			method: "POST",
+			body: `[
+				{
+					"correlation_id": "",
+					"original_url": "https://example.com/page1"
+				}
+			]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid JSON format"}`,
+			},
+		},
+		{
+			name:   "empty original_url",
+			method: "POST",
+			body: `[
+				{
+					"correlation_id": "1",
+					"original_url": ""
+				}
+			]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid JSON format"}`,
+			},
+		},
+		{
+			name:   "invalid JSON format",
+			method: "POST",
+			body:   `invalid json`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid JSON format"}`,
+			},
+		},
+		{
+			name:   "missing correlation_id field",
+			method: "POST",
+			body: `[
+				{
+					"original_url": "https://example.com/page1"
+				}
+			]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid JSON format"}`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockService := &MockService{}
+			handler := NewHandler(mockService)
+
+			router := setupGinRouter(handler)
+
+			req := httptest.NewRequest(test.method, "/api/shorten/batch", strings.NewReader(test.body))
+			for key, value := range test.headers {
+				req.Header.Set(key, value)
+			}
+
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			result := w.Result()
+			defer result.Body.Close()
+
+			assert.Equal(t, test.want.statusCode, result.StatusCode)
+
+			bodyResult, err := io.ReadAll(result.Body)
+			assert.NoError(t, err)
+
+			bodyStr := strings.TrimSpace(string(bodyResult))
 			assert.Equal(t, test.want.body, bodyStr)
 		})
 	}

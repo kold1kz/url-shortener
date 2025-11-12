@@ -83,3 +83,46 @@ func (r *PostgresURLRepository) Close() error {
 func (r *PostgresURLRepository) Ping() error {
 	return r.db.Ping()
 }
+
+func (r *PostgresURLRepository) CreateBatch(urls []*model.URL) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	insertStmt, err := tx.Prepare("INSERT INTO urls (id, original_url, short_url) VALUES ($1, $2, $3)")
+	if err != nil {
+		return fmt.Errorf("failed to prepare insert statement: %w", err)
+	}
+	defer insertStmt.Close()
+
+	checkStmt, err := tx.Prepare("SELECT id, short_url FROM urls WHERE original_url = $1")
+	if err != nil {
+		return fmt.Errorf("failed to prepare check statement: %w", err)
+	}
+	defer checkStmt.Close()
+
+	for _, url := range urls {
+		var existingID, existingShort string
+		err := checkStmt.QueryRow(url.Original).Scan(&existingID, &existingShort)
+
+		if err == nil {
+			url.ID = existingID
+			url.Short = existingShort
+			continue
+		} else if err != sql.ErrNoRows {
+			return fmt.Errorf("failed to check existing URL: %w", err)
+		}
+
+		if _, err := insertStmt.Exec(url.ID, url.Original, url.Short); err != nil {
+			return fmt.Errorf("failed to insert URL: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}

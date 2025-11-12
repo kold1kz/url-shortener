@@ -59,6 +59,7 @@ func main() {
 	router.GET("/:id", handlers.GetOriginalURL)
 	// Регистрируем обработчики JSON
 	router.POST("/api/shorten", handlers.ShortenJSONUrl)
+	router.POST("/api/shorten/batch", handlers.ShortenURLBatch)
 
 	// Регистрируем обработчик для бд
 	pingHandler := handler.NewPingHandler(db)
