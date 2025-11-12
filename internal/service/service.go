@@ -13,6 +13,7 @@ type URLService interface {
 	GetOriginalURL(id string) (string, error)
 	ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error)
 }
+
 type urlService struct {
 	repo    repository.URLRepository
 	baseURL string
@@ -32,7 +33,7 @@ func (s *urlService) ShortenURL(originalURL string) (*model.URL, error) {
 		return nil, err
 	}
 	if existingURL != nil {
-		return existingURL, nil
+		return existingURL, fmt.Errorf("URL already exists: %s", originalURL)
 	}
 
 	var id string
@@ -54,7 +55,7 @@ func (s *urlService) ShortenURL(originalURL string) (*model.URL, error) {
 	if err != nil {
 		if repository.IsURLConflictError(err) {
 			if conflictErr, ok := err.(*repository.URLConflictError); ok {
-				return conflictErr.ExistingURL, nil
+				return conflictErr.ExistingURL, fmt.Errorf("URL already exists: %s", originalURL)
 			}
 		}
 		return nil, fmt.Errorf("failed to create URL: %w", err)
