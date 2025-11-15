@@ -3,6 +3,7 @@ package service
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"url-shortener/internal/model"
 	"url-shortener/internal/repository"
 )
@@ -10,7 +11,9 @@ import (
 type URLService interface {
 	ShortenURL(original string) (*model.URL, error)
 	GetOriginalURL(id string) (string, error)
+	ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error)
 }
+
 type urlService struct {
 	repo    repository.URLRepository
 	baseURL string
@@ -30,7 +33,7 @@ func (s *urlService) ShortenURL(originalURL string) (*model.URL, error) {
 		return nil, err
 	}
 	if existingURL != nil {
-		return existingURL, nil
+		return existingURL, fmt.Errorf("URL already exists: %s", originalURL)
 	}
 
 	var id string
@@ -48,8 +51,14 @@ func (s *urlService) ShortenURL(originalURL string) (*model.URL, error) {
 		Short:    s.baseURL + "/" + id,
 	}
 
-	if err := s.repo.Create(url); err != nil {
-		return nil, err
+	err = s.repo.Create(url)
+	if err != nil {
+		if repository.IsURLConflictError(err) {
+			if conflictErr, ok := err.(*repository.URLConflictError); ok {
+				return conflictErr.ExistingURL, fmt.Errorf("URL already exists: %s", originalURL)
+			}
+		}
+		return nil, fmt.Errorf("failed to create URL: %w", err)
 	}
 
 	return url, nil
@@ -72,4 +81,26 @@ func generateID(length int) string {
 		panic(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(bytes)[:length]
+}
+
+func (s *urlService) ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error) {
+	if len(batch) == 0 {
+		return nil, fmt.Errorf("empty batch")
+	}
+
+	responses := make([]model.BatchResponse, 0, len(batch))
+
+	for _, item := range batch {
+		url, err := s.ShortenURL(item.OriginalURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to shorten URL for correlation_id %s: %w", item.CorrelationID, err)
+		}
+
+		responses = append(responses, model.BatchResponse{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      url.Short,
+		})
+	}
+
+	return responses, nil
 }

@@ -14,6 +14,7 @@ type URLRepository interface {
 	Create(url *model.URL) error
 	FindByID(id string) (*model.URL, error)
 	FindByOriginalURL(originalURL string) (*model.URL, error)
+	CreateBatch(urls []*model.URL) error
 }
 
 type InMemoryURLRepository struct {
@@ -80,7 +81,6 @@ func NewFileURLRepository(filePath string) (*FileURLRepository, error) {
 		filePath:     filePath,
 	}
 
-	// Загружаем данные из файла при инициализации
 	if err := repo.loadFromFile(); err != nil {
 		return nil, fmt.Errorf("failed to load data from file: %w", err)
 	}
@@ -194,4 +194,38 @@ func (r *FileURLRepository) FindByOriginalURL(originalURL string) (*model.URL, e
 
 func (r *FileURLRepository) Close() error {
 	return r.saveToFile()
+}
+
+func (r *InMemoryURLRepository) CreateBatch(urls []*model.URL) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, url := range urls {
+		if _, exists := r.originalURLs[url.Original]; exists {
+			continue
+		}
+		r.data[url.ID] = url
+		r.originalURLs[url.Original] = url.ID
+	}
+
+	return nil
+}
+
+func (r *FileURLRepository) CreateBatch(urls []*model.URL) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, url := range urls {
+		if _, exists := r.originalURLs[url.Original]; exists {
+			continue
+		}
+		r.data[url.ID] = url
+		r.originalURLs[url.Original] = url.ID
+	}
+
+	if err := r.saveToFile(); err != nil {
+		return fmt.Errorf("failed to save batch to file: %w", err)
+	}
+
+	return nil
 }

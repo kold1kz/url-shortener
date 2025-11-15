@@ -4,9 +4,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"log"
 	"url-shortener/internal/config"
+	"url-shortener/internal/database"
 	"url-shortener/internal/handler"
 	"url-shortener/internal/middleware"
-	"url-shortener/internal/service"
 )
 
 func loadConfig() *config.Config {
@@ -21,6 +21,19 @@ func loadConfig() *config.Config {
 	return cfg
 }
 
+func setupDatabase(cfg *config.Config) *database.DB {
+	if cfg.DatabaseDSN == "" {
+		return nil
+	}
+
+	db, err := database.NewDB(cfg.DatabaseDSN)
+	if err != nil {
+		log.Printf("Failed to connect to database: %v", err)
+	}
+	log.Printf("Connected to PostgreSQL")
+	return db
+}
+
 func main() {
 	cfg := loadConfig()
 	defer cfg.Close()
@@ -28,9 +41,12 @@ func main() {
 	logger := middleware.InitLogger()
 	defer logger.Sync()
 
-	// repo := repository.NewInMemoryURLRepository()
-	urlService := service.NewURLService(cfg.URLRepository, cfg.BaseURL)
-	handlers := handler.NewHandler(urlService)
+	db := setupDatabase(cfg)
+	if db != nil {
+		defer db.Close()
+	}
+
+	handlers := handler.NewHandler(cfg.URLService)
 
 	// Настройка маршрутов
 	router := gin.Default()
@@ -43,6 +59,11 @@ func main() {
 	router.GET("/:id", handlers.GetOriginalURL)
 	// Регистрируем обработчики JSON
 	router.POST("/api/shorten", handlers.ShortenJSONUrl)
+	router.POST("/api/shorten/batch", handlers.ShortenURLBatch)
+
+	// Регистрируем обработчик для бд
+	pingHandler := handler.NewPingHandler(db)
+	router.GET("/ping", pingHandler.Ping)
 
 	// Запуск сервера
 	//log.Printf("Server starting on %s %s", cfg.BaseURL, cfg.ServerAddress)

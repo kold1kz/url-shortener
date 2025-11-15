@@ -3,15 +3,19 @@ package config
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"url-shortener/internal/database"
 	"url-shortener/internal/repository"
+	"url-shortener/internal/service"
 )
 
 type Config struct {
 	ServerAddress   string
 	BaseURL         string
 	FileStoragePath string
-	URLRepository   repository.URLRepository
+	DatabaseDSN     string
+	URLService      service.URLService
 }
 
 func Init() *Config {
@@ -20,6 +24,8 @@ func Init() *Config {
 	flag.StringVar(&cfg.ServerAddress, "a", "localhost:8080", "HTTP server address")
 	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "Base URL for short links")
 	flag.StringVar(&cfg.FileStoragePath, "f", "./tmp/shorten_url.json", "File storage path")
+	flag.StringVar(&cfg.DatabaseDSN, "d", "postgres://username:password@localhost:5432/database_name",
+		"Database address")
 	flag.Parse()
 
 	if envServer := os.Getenv("SERVER_ADDRESS"); envServer != "" {
@@ -33,7 +39,11 @@ func Init() *Config {
 	if envFileStorage := os.Getenv("FILE_STORAGE_PATH"); envFileStorage != "" {
 		cfg.FileStoragePath = envFileStorage
 	}
-	cfg.initRepository()
+
+	if envDatabaseDSN := os.Getenv("DATABASE_DSN"); envDatabaseDSN != "" {
+		cfg.DatabaseDSN = envDatabaseDSN
+	}
+	cfg.initService()
 	return cfg
 }
 
@@ -47,22 +57,49 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) initRepository() {
-	if c.FileStoragePath != "" {
+func (c *Config) initService() {
+	var repo repository.URLRepository
+
+	if c.DatabaseDSN != "" {
+		db, err := database.NewDB(c.DatabaseDSN)
+		if err != nil {
+			log.Printf("Failed to connect to PostgreSQL: %v", err)
+			log.Printf("Falling back to file storage")
+
+		} else {
+			postgresRepo, err := repository.NewPostgresURLRepository(db.GetDB())
+			if err != nil {
+				log.Printf("Failed to initialize PostgreSQL repository: %v", err)
+				log.Printf("Falling back to file storage")
+			} else {
+				repo = postgresRepo
+				log.Printf("Using PostgreSQL repository")
+			}
+		}
+	}
+
+	if repo == nil && c.FileStoragePath != "" {
 		fileRepo, err := repository.NewFileURLRepository(c.FileStoragePath)
 		if err != nil {
-			c.URLRepository = repository.NewInMemoryURLRepository()
+			log.Printf("Failed to initialize file repository: %v", err)
+			log.Printf("Falling back to in-memory storage")
 		} else {
-			c.URLRepository = fileRepo
+			repo = fileRepo
+			log.Printf("Using file repository: %s", c.FileStoragePath)
 		}
-	} else {
-		c.URLRepository = repository.NewInMemoryURLRepository()
 	}
+
+	if repo == nil {
+		repo = repository.NewInMemoryURLRepository()
+		log.Printf("Using in-memory repository")
+	}
+
+	c.URLService = service.NewURLService(repo, c.BaseURL)
 }
 
 func (c *Config) Close() error {
-	if fileRepo, ok := c.URLRepository.(*repository.FileURLRepository); ok {
-		return fileRepo.Close()
+	if urlService, ok := c.URLService.(interface{ Close() error }); ok {
+		return urlService.Close()
 	}
 	return nil
 }
