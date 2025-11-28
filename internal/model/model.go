@@ -4,6 +4,7 @@ type URL struct {
 	ID       string `json:"id"`
 	Original string `json:"original"`
 	Short    string `json:"short"`
+	UserID   string `json:"-"`
 }
 
 type ShortenRequest struct {
@@ -22,4 +23,9 @@ type BatchRequest struct {
 type BatchResponse struct {
 	CorrelationID string `json:"correlation_id"`
 	ShortURL      string `json:"short_url"`
+}
+
+type UserURLResponse struct {
+	ShortURL    string `json:"short_url"`
+	OriginalURL string `json:"original_url"`
 }

@@ -47,8 +47,8 @@ func checkTableExists(db *sql.DB) error {
 }
 
 func (r *PostgresURLRepository) Create(url *model.URL) error {
-	query := `INSERT INTO urls (id, original_url, short_url) VALUES ($1, $2, $3)`
-	_, err := r.db.Exec(query, url.ID, url.Original, url.Short)
+	query := `INSERT INTO urls (id, original_url, short_url, user_id) VALUES ($1, $2, $3, $4)`
+	_, err := r.db.Exec(query, url.ID, url.Original, url.Short, url.UserID)
 	if err != nil {
 		// Проверяем, является ли ошибка нарушением уникальности
 		var pgErr *pgconn.PgError
@@ -105,6 +105,26 @@ func (r *PostgresURLRepository) FindByOriginalURL(originalURL string) (*model.UR
 		return nil, err
 	}
 	return &url, nil
+}
+
+func (r *PostgresURLRepository) FindByUserID(userID string) ([]*model.URL, error) {
+	query := `SELECT id, original_url, short_url, user_id FROM urls WHERE user_id = $1`
+
+	rows, err := r.db.Query(query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*model.URL
+	for rows.Next() {
+		var url model.URL
+		if err := rows.Scan(&url.ID, &url.Original, &url.Short, &url.UserID); err != nil {
+			return nil, err
+		}
+		res = append(res, &url)
+	}
+	return res, rows.Err()
 }
 
 func (r *PostgresURLRepository) Close() error {

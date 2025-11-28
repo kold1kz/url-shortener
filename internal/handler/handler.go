@@ -2,9 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strings"
+	"url-shortener/internal/auth"
 	"url-shortener/internal/model"
 	"url-shortener/internal/service"
 )
@@ -35,16 +37,27 @@ func (h *Handlers) ShortenURL(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "URL cannot be empty"})
 		return
 	}
-
-	url, err := h.service.ShortenURL(originalURL)
+	rawCookie, _ := c.Cookie(auth.CookieName())
+	userID, newToken, err := auth.GetOrCreateUserIDFromCookie(rawCookie)
 	if err != nil {
-		// Проверяем, это ошибка конфликта или другая ошибка
-		if strings.Contains(err.Error(), "URL already exists") {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
+		return
+	}
+	if newToken != "" {
+		c.SetCookie(auth.CookieName(), newToken, 0, "/", "", false, true)
+	}
+
+	url, err := h.service.ShortenURL(c.Request.Context(), originalURL, userID)
+	if err != nil {
+		if errors.Is(err, service.ErrURLAlreadyExists) {
 			c.Header("Content-Type", "text/plain")
 			c.String(http.StatusConflict, url.Short)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": http.StatusText(http.StatusInternalServerError),
+		})
 		return
 	}
 
@@ -61,9 +74,11 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 		return
 	}
 
-	originalURL, err := h.service.GetOriginalURL(id)
+	originalURL, err := h.service.GetOriginalURL(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": http.StatusText(http.StatusInternalServerError),
+		})
 		return
 	}
 
@@ -100,15 +115,31 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 		return
 	}
 
-	url, err := h.service.ShortenURL(req.URL)
+	rawCookie, _ := c.Cookie(auth.CookieName())
+	userID, newToken, err := auth.GetOrCreateUserIDFromCookie(rawCookie)
 	if err != nil {
-		resp := model.ShortenResponse{Result: url.Short}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
+		return
+	}
+	if newToken != "" {
+		c.SetCookie(auth.CookieName(), newToken, 0, "/", "", false, true)
+	}
 
-		if strings.Contains(err.Error(), "URL already exists") {
+	url, err := h.service.ShortenURL(c.Request.Context(), req.URL, userID)
+	if err != nil {
+		resp := model.ShortenResponse{Result: ""}
+		if url != nil {
+			resp.Result = url.Short
+		}
+
+		if errors.Is(err, service.ErrURLAlreadyExists) {
 			c.JSON(http.StatusConflict, resp)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": http.StatusText(http.StatusInternalServerError),
+		})
 		return
 	}
 
@@ -156,9 +187,22 @@ func (h *Handlers) ShortenURLBatch(c *gin.Context) {
 		}
 	}
 
-	responses, err := h.service.ShortenURLBatch(batch)
+	rawCookie, _ := c.Cookie(auth.CookieName())
+	userID, newToken, err := auth.GetOrCreateUserIDFromCookie(rawCookie)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URLs"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
+		return
+	}
+	if newToken != "" {
+		c.SetCookie(auth.CookieName(), newToken, 0, "/", "", false, true)
+	}
+
+	responses, err := h.service.ShortenURLBatch(c.Request.Context(), batch, userID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": http.StatusText(http.StatusInternalServerError),
+		})
 		return
 	}
 
@@ -170,4 +214,39 @@ func (h *Handlers) ShortenURLBatch(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode response"})
 		return
 	}
+}
+
+func (h *Handlers) GetUserURLs(c *gin.Context) {
+	rawCookie, err := c.Cookie(auth.CookieName())
+	if err != nil {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := auth.GetUserIDFromCookieStrict(rawCookie)
+	if err != nil || userID == "" {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+
+	urls, err := h.service.FindByUserID(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": http.StatusText(http.StatusInternalServerError)})
+		return
+	}
+
+	if len(urls) == 0 {
+		c.Status(http.StatusNoContent)
+		return
+	}
+
+	resp := make([]model.UserURLResponse, 0, len(urls))
+	for _, u := range urls {
+		resp = append(resp, model.UserURLResponse{
+			ShortURL:    u.Short,
+			OriginalURL: u.Original,
+		})
+	}
+
+	c.JSON(http.StatusOK, resp)
 }

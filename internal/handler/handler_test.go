@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"url-shortener/internal/auth"
 	"url-shortener/internal/model"
 )
 
@@ -17,46 +19,56 @@ type MockService struct{}
 
 type MockServiceWithError struct{}
 
-func (m *MockServiceWithError) ShortenURL(original string) (*model.URL, error) {
+func (m *MockServiceWithError) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
 	return nil, errors.New("service error")
 }
 
-func (m *MockServiceWithError) GetOriginalURL(id string) (string, error) {
+func (m *MockServiceWithError) GetOriginalURL(ctx context.Context, id string) (string, error) {
 	return "", errors.New("service error")
 }
 
-func (m *MockServiceWithError) ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error) {
+func (m *MockServiceWithError) ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error) {
 	return nil, errors.New("batch processing failed")
 }
 
-func (m *MockService) ShortenURL(original string) (*model.URL, error) {
+func (m *MockServiceWithError) FindByUserID(ctx context.Context, userID string) ([]*model.URL, error) {
+	return nil, errors.New("service error")
+}
+
+type MockServiceEmptyUserURLs struct{}
+
+func (m *MockServiceEmptyUserURLs) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
+	return nil, nil
+}
+
+func (m *MockServiceEmptyUserURLs) GetOriginalURL(ctx context.Context, id string) (string, error) {
+	return "", nil
+}
+
+func (m *MockServiceEmptyUserURLs) ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error) {
+	return nil, nil
+}
+
+func (m *MockServiceEmptyUserURLs) FindByUserID(ctx context.Context, userID string) ([]*model.URL, error) {
+	return []*model.URL{}, nil
+}
+func (m *MockService) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
 	return &model.URL{
 		ID:       "abc123",
 		Original: original,
 		Short:    "http://localhost:8080/abc123",
+		UserID:   userID,
 	}, nil
 }
 
-func (m *MockService) GetOriginalURL(id string) (string, error) {
+func (m *MockService) GetOriginalURL(ctx context.Context, id string) (string, error) {
 	if id == "nonexistent" {
 		return "", errors.New("not found")
 	}
 	return "https://example.com", nil
 }
 
-func setupGinRouter(handler *Handlers) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-
-	router.POST("/", handler.ShortenURL)
-	router.GET("/:id", handler.GetOriginalURL)
-	router.POST("/api/shorten", handler.ShortenJSONUrl)
-	router.POST("/api/shorten/batch", handler.ShortenURLBatch)
-
-	return router
-}
-
-func (m *MockService) ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error) {
+func (m *MockService) ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error) {
 	responses := make([]model.BatchResponse, 0, len(batch))
 
 	for _, item := range batch {
@@ -67,6 +79,30 @@ func (m *MockService) ShortenURLBatch(batch []model.BatchRequest) ([]model.Batch
 	}
 
 	return responses, nil
+}
+
+func (m *MockService) FindByUserID(ctx context.Context, userID string) ([]*model.URL, error) {
+	return []*model.URL{
+		{
+			ID:       "1",
+			Original: "https://example.com/1",
+			Short:    "http://localhost:8080/1",
+			UserID:   userID,
+		},
+	}, nil
+}
+
+func setupGinRouter(handler *Handlers) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	router.POST("/", handler.ShortenURL)
+	router.GET("/:id", handler.GetOriginalURL)
+	router.POST("/api/shorten", handler.ShortenJSONUrl)
+	router.POST("/api/shorten/batch", handler.ShortenURLBatch)
+	router.GET("/api/user/urls", handler.GetUserURLs)
+
+	return router
 }
 
 func TestShortenURL(t *testing.T) {
@@ -240,7 +276,7 @@ func TestGetOriginalURL(t *testing.T) {
 			url:    "/nonexistent",
 			want: want{
 				statusCode: http.StatusInternalServerError,
-				body:       `{"error":"Invalid server error"}`,
+				body:       `{"error":"Internal Server Error"}`,
 			},
 		},
 		{
@@ -686,4 +722,76 @@ func TestShortenURLBatch_ValidationErrors(t *testing.T) {
 			assert.Equal(t, test.want.body, bodyStr)
 		})
 	}
+}
+
+func TestGetUserURLs_Unauthorized(t *testing.T) {
+	tests := []struct {
+		name      string
+		setCookie bool
+		cookieVal string
+	}{
+		{
+			name:      "no cookie",
+			setCookie: false,
+		},
+		{
+			name:      "invalid cookie value",
+			setCookie: true,
+			cookieVal: "broken-token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := &MockService{}
+			h := NewHandler(mockService)
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest("GET", "/api/user/urls", nil)
+			if tt.setCookie {
+				req.AddCookie(&http.Cookie{
+					Name:  auth.CookieName(),
+					Value: tt.cookieVal,
+				})
+			}
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
+		})
+	}
+}
+
+func TestGetUserURLs_InternalError(t *testing.T) {
+	mockService := &MockServiceWithError{}
+	h := NewHandler(mockService)
+	router := setupGinRouter(h)
+
+	// генерируем валидную куку через auth
+	_, token, err := auth.GetOrCreateUserIDFromCookie("")
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest("GET", "/api/user/urls", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  auth.CookieName(),
+		Value: token,
+	})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	res := w.Result()
+	defer res.Body.Close()
+
+	assert.Equal(t, http.StatusInternalServerError, res.StatusCode)
+
+	bodyBytes, err := io.ReadAll(res.Body)
+	assert.NoError(t, err)
+
+	bodyStr := strings.TrimSpace(string(bodyBytes))
+	assert.Equal(t, `{"error":"Internal Server Error"}`, bodyStr)
 }

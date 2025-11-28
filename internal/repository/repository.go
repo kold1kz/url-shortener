@@ -15,18 +15,21 @@ type URLRepository interface {
 	FindByID(id string) (*model.URL, error)
 	FindByOriginalURL(originalURL string) (*model.URL, error)
 	CreateBatch(urls []*model.URL) error
+	FindByUserID(userID string) ([]*model.URL, error)
 }
 
 type InMemoryURLRepository struct {
 	mu           sync.RWMutex
 	data         map[string]*model.URL
 	originalURLs map[string]string
+	userURLs     map[string][]*model.URL
 }
 
 func NewInMemoryURLRepository() *InMemoryURLRepository {
 	return &InMemoryURLRepository{
 		data:         make(map[string]*model.URL),
 		originalURLs: make(map[string]string),
+		userURLs:     make(map[string][]*model.URL),
 	}
 }
 
@@ -38,12 +41,16 @@ func (r *InMemoryURLRepository) Create(url *model.URL) error {
 	}
 	r.data[url.ID] = url
 	r.originalURLs[url.Original] = url.ID
+	if url.UserID != "" {
+		r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+	}
 	return nil
 }
 
 func (r *InMemoryURLRepository) FindByID(id string) (*model.URL, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	url, exists := r.data[id]
 	if !exists {
 		return nil, nil
@@ -67,17 +74,29 @@ func (r *InMemoryURLRepository) FindByOriginalURL(originalURL string) (*model.UR
 	return url, nil
 }
 
+func (r *InMemoryURLRepository) FindByUserID(userID string) ([]*model.URL, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	urls := r.userURLs[userID]
+	res := make([]*model.URL, len(urls))
+	copy(res, urls)
+	return res, nil
+}
+
 type FileURLRepository struct {
 	mu           sync.RWMutex
 	data         map[string]*model.URL
 	originalURLs map[string]string
 	filePath     string
+	userURLs     map[string][]*model.URL
 }
 
 func NewFileURLRepository(filePath string) (*FileURLRepository, error) {
 	repo := &FileURLRepository{
 		data:         make(map[string]*model.URL),
 		originalURLs: make(map[string]string),
+		userURLs:     make(map[string][]*model.URL),
 		filePath:     filePath,
 	}
 
@@ -114,6 +133,10 @@ func (r *FileURLRepository) loadFromFile() error {
 		url := &urls[i]
 		r.data[url.ID] = url
 		r.originalURLs[url.Original] = url.ID
+
+		if url.UserID != "" {
+			r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+		}
 	}
 
 	return nil
@@ -152,7 +175,9 @@ func (r *FileURLRepository) Create(url *model.URL) error {
 
 	r.data[url.ID] = url
 	r.originalURLs[url.Original] = url.ID
-
+	if url.UserID != "" {
+		r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+	}
 	if err := r.saveToFile(); err != nil {
 		// Откатываем изменения если сохранение не удалось
 		delete(r.data, url.ID)
@@ -190,6 +215,16 @@ func (r *FileURLRepository) FindByOriginalURL(originalURL string) (*model.URL, e
 	}
 
 	return url, nil
+}
+
+func (r *FileURLRepository) FindByUserID(userID string) ([]*model.URL, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	urls := r.userURLs[userID]
+	res := make([]*model.URL, len(urls))
+	copy(res, urls)
+	return res, nil
 }
 
 func (r *FileURLRepository) Close() error {
