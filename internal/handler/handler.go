@@ -218,15 +218,25 @@ func (h *Handlers) ShortenURLBatch(c *gin.Context) {
 
 func (h *Handlers) GetUserURLs(c *gin.Context) {
 	rawCookie, err := c.Cookie(auth.CookieName())
-	if err != nil {
-		c.Status(http.StatusUnauthorized)
-		return
-	}
 
-	userID, err := auth.GetUserIDFromCookieStrict(rawCookie)
-	if err != nil || userID == "" {
-		c.Status(http.StatusUnauthorized)
-		return
+	var userID string
+	var newToken string
+
+	if err != nil || rawCookie == "" {
+		userID, newToken, err = auth.GetOrCreateUserIDFromCookie("")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
+			return
+		}
+		if newToken != "" {
+			c.SetCookie(auth.CookieName(), newToken, 0, "/", "", false, true)
+		}
+	} else {
+		userID, err = auth.GetUserIDFromCookieStrict(rawCookie)
+		if err != nil || userID == "" {
+			c.Status(http.StatusUnauthorized)
+			return
+		}
 	}
 
 	urls, err := h.service.FindByUserID(c.Request.Context(), userID)

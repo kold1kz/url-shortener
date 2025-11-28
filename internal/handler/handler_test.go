@@ -724,34 +724,161 @@ func TestShortenURLBatch_ValidationErrors(t *testing.T) {
 	}
 }
 
-func TestGetUserURLs_Unauthorized(t *testing.T) {
+func TestGetUserURLs_NoCookieAndEmpty(t *testing.T) {
+	type want struct {
+		statusCode   int
+		body         string
+		expectCookie bool
+	}
+
 	tests := []struct {
-		name      string
-		setCookie bool
-		cookieVal string
+		name string
 	}{
 		{
-			name:      "no cookie",
-			setCookie: false,
-		},
-		{
-			name:      "invalid cookie value",
-			setCookie: true,
-			cookieVal: "broken-token",
+			name: "no_cookie_new_user_no_urls",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// сервис, который возвращает пустой список ссылок
+			mockService := &MockServiceEmptyUserURLs{}
+			h := NewHandler(mockService)
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			// Новый пользователь без куки и без ссылок -> 204 No Content
+			assert.Equal(t, http.StatusNoContent, res.StatusCode)
+
+			// При этом сервер должен выдать auth-куку
+			setCookie := res.Header.Get("Set-Cookie")
+			assert.NotEmpty(t, setCookie)
+			assert.Contains(t, setCookie, auth.CookieName()+"=")
+		})
+	}
+}
+
+func TestGetUserURLs_Success(t *testing.T) {
+	type want struct {
+		statusCode  int
+		body        string
+		contentType string
+	}
+
+	tests := []struct {
+		name string
+	}{
+		{
+			name: "valid_cookie_with_urls",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
 			h := NewHandler(mockService)
 			router := setupGinRouter(h)
 
-			req := httptest.NewRequest("GET", "/api/user/urls", nil)
-			if tt.setCookie {
+			// генерируем валидную куку так же, как делает auth
+			_, token, err := auth.GetOrCreateUserIDFromCookie("")
+			assert.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+			req.AddCookie(&http.Cookie{
+				Name:  auth.CookieName(),
+				Value: token,
+			})
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, http.StatusOK, res.StatusCode)
+			assert.Equal(t, "application/json; charset=utf-8", res.Header.Get("Content-Type"))
+
+			bodyBytes, err := io.ReadAll(res.Body)
+			assert.NoError(t, err)
+
+			bodyStr := strings.TrimSpace(string(bodyBytes))
+
+			// ожидаемый ответ от MockService.FindByUserID
+			expected := `[{"short_url":"http://localhost:8080/1","original_url":"https://example.com/1"}]`
+			assert.JSONEq(t, expected, bodyStr)
+		})
+	}
+}
+
+func TestGetUserURLs_ErrorCases(t *testing.T) {
+	type want struct {
+		statusCode int
+		body       string
+	}
+
+	tests := []struct {
+		name       string
+		cookieVal  string
+		useService string // "normal" или "error"
+		want       want
+	}{
+		{
+			name:       "invalid_cookie_value",
+			cookieVal:  "broken-token",
+			useService: "normal",
+			want: want{
+				statusCode: http.StatusUnauthorized,
+				body:       "",
+			},
+		},
+		{
+			name:       "internal_error_from_service",
+			useService: "error",
+			// сюда поставим валидную куку внутри теста
+			want: want{
+				statusCode: http.StatusInternalServerError,
+				body:       `{"error":"Internal Server Error"}`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var h *Handlers
+
+			switch test.useService {
+			case "error":
+				h = NewHandler(&MockServiceWithError{})
+			default:
+				h = NewHandler(&MockService{})
+			}
+
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+
+			// для кейса internal error — генерируем валидную куку
+			if test.useService == "error" {
+				_, token, err := auth.GetOrCreateUserIDFromCookie("")
+				assert.NoError(t, err)
 				req.AddCookie(&http.Cookie{
 					Name:  auth.CookieName(),
-					Value: tt.cookieVal,
+					Value: token,
+				})
+			}
+
+			// для кейса invalid_cookie_value — используем битый токен
+			if test.cookieVal != "" {
+				req.AddCookie(&http.Cookie{
+					Name:  auth.CookieName(),
+					Value: test.cookieVal,
 				})
 			}
 
@@ -761,37 +888,14 @@ func TestGetUserURLs_Unauthorized(t *testing.T) {
 			res := w.Result()
 			defer res.Body.Close()
 
-			assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
+			assert.Equal(t, test.want.statusCode, res.StatusCode)
+
+			if test.want.body != "" {
+				bodyBytes, err := io.ReadAll(res.Body)
+				assert.NoError(t, err)
+				bodyStr := strings.TrimSpace(string(bodyBytes))
+				assert.Equal(t, test.want.body, bodyStr)
+			}
 		})
 	}
-}
-
-func TestGetUserURLs_InternalError(t *testing.T) {
-	mockService := &MockServiceWithError{}
-	h := NewHandler(mockService)
-	router := setupGinRouter(h)
-
-	// генерируем валидную куку через auth
-	_, token, err := auth.GetOrCreateUserIDFromCookie("")
-	assert.NoError(t, err)
-
-	req := httptest.NewRequest("GET", "/api/user/urls", nil)
-	req.AddCookie(&http.Cookie{
-		Name:  auth.CookieName(),
-		Value: token,
-	})
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	res := w.Result()
-	defer res.Body.Close()
-
-	assert.Equal(t, http.StatusInternalServerError, res.StatusCode)
-
-	bodyBytes, err := io.ReadAll(res.Body)
-	assert.NoError(t, err)
-
-	bodyStr := strings.TrimSpace(string(bodyBytes))
-	assert.Equal(t, `{"error":"Internal Server Error"}`, bodyStr)
 }
