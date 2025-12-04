@@ -1,1 +1,1 @@
-migrate create -ext sql -dir ./migrations -seq add_is_deleted_to_urls
+ALTER TABLE urls DROP COLUMN is_deleted;
