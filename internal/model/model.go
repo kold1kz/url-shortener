@@ -1,10 +1,11 @@
 package model
 
 type URL struct {
-	ID       string `json:"id"`
-	Original string `json:"original"`
-	Short    string `json:"short"`
-	UserID   string `json:"-"`
+	ID        string `json:"id"`
+	Original  string `json:"original"`
+	Short     string `json:"short"`
+	UserID    string `json:"-"`
+	IsDeleted bool   `json:"is_deleted"`
 }
 
 type ShortenRequest struct {

@@ -15,9 +15,14 @@ import (
 	"url-shortener/internal/model"
 )
 
-type MockService struct{}
+type MockService struct {
+	deletedUserID string
+	deletedIDs    []string
+}
 
 type MockServiceWithError struct{}
+
+type MockServiceEmptyUserURLs struct{}
 
 func (m *MockServiceWithError) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
 	return nil, errors.New("service error")
@@ -35,8 +40,6 @@ func (m *MockServiceWithError) FindByUserID(ctx context.Context, userID string) 
 	return nil, errors.New("service error")
 }
 
-type MockServiceEmptyUserURLs struct{}
-
 func (m *MockServiceEmptyUserURLs) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
 	return nil, nil
 }
@@ -52,6 +55,15 @@ func (m *MockServiceEmptyUserURLs) ShortenURLBatch(ctx context.Context, batch []
 func (m *MockServiceEmptyUserURLs) FindByUserID(ctx context.Context, userID string) ([]*model.URL, error) {
 	return []*model.URL{}, nil
 }
+
+func (m *MockServiceWithError) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+	return nil
+}
+
+func (m *MockServiceEmptyUserURLs) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+	return nil
+}
+
 func (m *MockService) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
 	return &model.URL{
 		ID:       "abc123",
@@ -92,6 +104,12 @@ func (m *MockService) FindByUserID(ctx context.Context, userID string) ([]*model
 	}, nil
 }
 
+func (m *MockService) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+	m.deletedUserID = userID
+	m.deletedIDs = append([]string(nil), ids...)
+	return nil
+}
+
 func setupGinRouter(handler *Handlers) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -101,6 +119,7 @@ func setupGinRouter(handler *Handlers) *gin.Engine {
 	router.POST("/api/shorten", handler.ShortenJSONUrl)
 	router.POST("/api/shorten/batch", handler.ShortenURLBatch)
 	router.GET("/api/user/urls", handler.GetUserURLs)
+	router.DELETE("/api/user/urls", handler.DeleteUserURLs)
 
 	return router
 }
@@ -896,6 +915,156 @@ func TestGetUserURLs_ErrorCases(t *testing.T) {
 				bodyStr := strings.TrimSpace(string(bodyBytes))
 				assert.Equal(t, test.want.body, bodyStr)
 			}
+		})
+	}
+}
+
+func TestDeleteUserURLs_Success(t *testing.T) {
+	type want struct {
+		statusCode int
+		body       string
+	}
+
+	tests := []struct {
+		name    string
+		method  string
+		body    string
+		headers map[string]string
+		want    want
+	}{
+		{
+			name:   "valid request with ids",
+			method: "DELETE",
+			body:   `["id1","id2","id3"]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusAccepted,
+				body:       "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := &MockService{}
+			h := NewHandler(mockService)
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(tt.method, "/api/user/urls", strings.NewReader(tt.body))
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+
+			_, token, err := auth.GetOrCreateUserIDFromCookie("")
+			assert.NoError(t, err)
+
+			req.AddCookie(&http.Cookie{
+				Name:  auth.CookieName(),
+				Value: token,
+			})
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, tt.want.statusCode, res.StatusCode)
+
+			bodyBytes, err := io.ReadAll(res.Body)
+			assert.NoError(t, err)
+			bodyStr := strings.TrimSpace(string(bodyBytes))
+			assert.Equal(t, tt.want.body, bodyStr)
+
+			assert.NotEmpty(t, mockService.deletedUserID)
+			assert.Equal(t, []string{"id1", "id2", "id3"}, mockService.deletedIDs)
+		})
+	}
+}
+
+func TestDeleteUserURLs_ValidationErrors(t *testing.T) {
+	type want struct {
+		statusCode int
+		body       string
+	}
+
+	tests := []struct {
+		name    string
+		method  string
+		body    string
+		headers map[string]string
+		want    want
+	}{
+		{
+			name:   "invalid content type",
+			method: "DELETE",
+			body:   `["id1","id2"]`,
+			headers: map[string]string{
+				"Content-Type": "text/plain",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid content type"}`,
+			},
+		},
+		{
+			name:   "invalid json format",
+			method: "DELETE",
+			body:   `not json`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid JSON format"}`,
+			},
+		},
+		{
+			name:   "empty ids array",
+			method: "DELETE",
+			body:   `[]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Empty batch"}`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := &MockService{}
+			h := NewHandler(mockService)
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(tt.method, "/api/user/urls", strings.NewReader(tt.body))
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+
+			_, token, err := auth.GetOrCreateUserIDFromCookie("")
+			assert.NoError(t, err)
+			req.AddCookie(&http.Cookie{
+				Name:  auth.CookieName(),
+				Value: token,
+			})
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, tt.want.statusCode, res.StatusCode)
+
+			bodyBytes, err := io.ReadAll(res.Body)
+			assert.NoError(t, err)
+			bodyStr := strings.TrimSpace(string(bodyBytes))
+			assert.Equal(t, tt.want.body, bodyStr)
 		})
 	}
 }

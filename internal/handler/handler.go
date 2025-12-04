@@ -76,6 +76,10 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 
 	originalURL, err := h.service.GetOriginalURL(c.Request.Context(), id)
 	if err != nil {
+		if errors.Is(err, service.ErrURLDeleted) {
+			c.Status(http.StatusGone)
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": http.StatusText(http.StatusInternalServerError),
 		})
@@ -88,7 +92,6 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 	}
 
 	c.Header("Location", originalURL)
-	// если я правильно понял задания и здесь не нужен c.Redirect
 	c.String(http.StatusTemporaryRedirect, originalURL)
 }
 
@@ -159,7 +162,6 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 }
 
 func (h *Handlers) ShortenURLBatch(c *gin.Context) {
-	// Проверяем Content-Type
 	if c.ContentType() != "application/json" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
 		return
@@ -259,4 +261,40 @@ func (h *Handlers) GetUserURLs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handlers) DeleteUserURLs(c *gin.Context) {
+	if c.ContentType() != "application/json" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
+		return
+	}
+
+	rawCookie, err := c.Cookie(auth.CookieName())
+	if err != nil {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := auth.GetUserIDFromCookieStrict(rawCookie)
+	if err != nil || userID == "" {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+
+	var ids []string
+	if err := c.ShouldBindJSON(&ids); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+		return
+	}
+	if len(ids) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Empty batch"})
+		return
+	}
+
+	if err := h.service.DeleteUserURLs(c.Request.Context(), userID, ids); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": http.StatusText(http.StatusInternalServerError)})
+		return
+	}
+
+	c.Status(http.StatusAccepted)
 }

@@ -1,12 +1,14 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/lib/pq"
 	"url-shortener/internal/model"
 )
 
@@ -173,6 +175,19 @@ func (r *PostgresURLRepository) CreateBatch(urls []*model.URL) error {
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+func (r *PostgresURLRepository) MarkAsDeleted(ctx context.Context, userID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	query := "UPDATE urls SET is_deleted = TRUE WHERE user_id = $1 AND id = ANY($2)"
+	if _, err := r.db.ExecContext(ctx, query, userID, pq.Array(ids)); err != nil {
+		return fmt.Errorf("mark urls as deleted: %w", err)
 	}
 
 	return nil

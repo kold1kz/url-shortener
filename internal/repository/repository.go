@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,6 +17,7 @@ type URLRepository interface {
 	FindByOriginalURL(originalURL string) (*model.URL, error)
 	CreateBatch(urls []*model.URL) error
 	FindByUserID(userID string) ([]*model.URL, error)
+	MarkAsDeleted(ctx context.Context, userID string, ids []string) error
 }
 
 type InMemoryURLRepository struct {
@@ -44,6 +46,21 @@ func (r *InMemoryURLRepository) Create(url *model.URL) error {
 	if url.UserID != "" {
 		r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
 	}
+	return nil
+}
+
+func (r *InMemoryURLRepository) CreateBatch(urls []*model.URL) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, url := range urls {
+		if _, exists := r.originalURLs[url.Original]; exists {
+			continue
+		}
+		r.data[url.ID] = url
+		r.originalURLs[url.Original] = url.ID
+	}
+
 	return nil
 }
 
@@ -82,6 +99,11 @@ func (r *InMemoryURLRepository) FindByUserID(userID string) ([]*model.URL, error
 	res := make([]*model.URL, len(urls))
 	copy(res, urls)
 	return res, nil
+}
+
+func (r *InMemoryURLRepository) MarkAsDeleted(ctx context.Context, userID string, ids []string) error {
+	// Заглушка
+	return nil
 }
 
 type FileURLRepository struct {
@@ -231,21 +253,6 @@ func (r *FileURLRepository) Close() error {
 	return r.saveToFile()
 }
 
-func (r *InMemoryURLRepository) CreateBatch(urls []*model.URL) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for _, url := range urls {
-		if _, exists := r.originalURLs[url.Original]; exists {
-			continue
-		}
-		r.data[url.ID] = url
-		r.originalURLs[url.Original] = url.ID
-	}
-
-	return nil
-}
-
 func (r *FileURLRepository) CreateBatch(urls []*model.URL) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -262,5 +269,10 @@ func (r *FileURLRepository) CreateBatch(urls []*model.URL) error {
 		return fmt.Errorf("failed to save batch to file: %w", err)
 	}
 
+	return nil
+}
+
+func (r *FileURLRepository) MarkAsDeleted(ctx context.Context, userID string, ids []string) error {
+	// заглушка
 	return nil
 }

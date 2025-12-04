@@ -66,6 +66,7 @@ func main() {
 	router.POST("/api/shorten/batch", handlers.ShortenURLBatch)
 
 	router.GET("/api/user/urls", handlers.GetUserURLs)
+	router.DELETE("/api/user/urls", handlers.DeleteUserURLs)
 
 	// Регистрируем обработчик для бд
 	pingHandler := handler.NewPingHandler(db)

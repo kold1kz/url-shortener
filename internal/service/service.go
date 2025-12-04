@@ -6,29 +6,46 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
+	"time"
 	"url-shortener/internal/model"
 	"url-shortener/internal/repository"
 )
 
-var ErrURLAlreadyExists = errors.New("url already exists")
+var (
+	ErrURLAlreadyExists = errors.New("url already exists")
+	ErrURLDeleted       = errors.New("url deleted")
+)
 
 type URLService interface {
 	ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error)
 	GetOriginalURL(ctx context.Context, id string) (string, error)
 	ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error)
 	FindByUserID(ctx context.Context, userID string) ([]*model.URL, error)
+	DeleteUserURLs(ctx context.Context, userID string, ids []string) error
+}
+
+type deleteRequest struct {
+	userID string
+	ids    []string
 }
 
 type urlService struct {
-	repo    repository.URLRepository
-	baseURL string
+	repo     repository.URLRepository
+	baseURL  string
+	deleteCh chan deleteRequest
 }
 
 func NewURLService(repo repository.URLRepository, baseURL string) URLService {
-	return &urlService{
-		repo:    repo,
-		baseURL: baseURL,
+	s := &urlService{
+		repo:     repo,
+		baseURL:  baseURL,
+		deleteCh: make(chan deleteRequest, 1024),
 	}
+
+	go s.deleteWorker()
+
+	return s
 }
 
 func (s *urlService) ShortenURL(ctx context.Context, originalURL, userID string) (*model.URL, error) {
@@ -85,6 +102,9 @@ func (s *urlService) GetOriginalURL(ctx context.Context, id string) (string, err
 	if url == nil {
 		return "", nil
 	}
+	if url.IsDeleted {
+		return "", ErrURLDeleted
+	}
 	return url.Original, nil
 }
 
@@ -116,4 +136,58 @@ func (s *urlService) ShortenURLBatch(ctx context.Context, batch []model.BatchReq
 	}
 
 	return responses, nil
+}
+
+func (s *urlService) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	req := deleteRequest{
+		userID: userID,
+		ids:    ids,
+	}
+
+	select {
+	case s.deleteCh <- req:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *urlService) deleteWorker() {
+	const flushInterval = time.Second
+	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
+
+	batches := make(map[string][]string)
+
+	for {
+		select {
+		case req := <-s.deleteCh:
+			if len(req.ids) == 0 {
+				continue
+			}
+			batches[req.userID] = append(batches[req.userID], req.ids...)
+
+		case <-ticker.C:
+			if len(batches) == 0 {
+				continue
+			}
+
+			for userID, ids := range batches {
+				if len(ids) == 0 {
+					continue
+				}
+
+				if err := s.repo.MarkAsDeleted(context.Background(), userID, ids); err != nil {
+					log.Println("failed to mark URLs as deleted", userID, ids, err)
+					continue
+				}
+			}
+
+			batches = make(map[string][]string)
+		}
+	}
 }
