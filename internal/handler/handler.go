@@ -247,17 +247,20 @@ func (h *Handlers) GetUserURLs(c *gin.Context) {
 		return
 	}
 
-	if len(urls) == 0 {
-		c.Status(http.StatusNoContent)
-		return
-	}
-
 	resp := make([]model.UserURLResponse, 0, len(urls))
 	for _, u := range urls {
+		if u.IsDeleted {
+			continue
+		}
 		resp = append(resp, model.UserURLResponse{
 			ShortURL:    u.Short,
 			OriginalURL: u.Original,
 		})
+	}
+
+	if len(resp) == 0 {
+		c.Status(http.StatusNoContent)
+		return
 	}
 
 	c.JSON(http.StatusOK, resp)

@@ -102,7 +102,21 @@ func (r *InMemoryURLRepository) FindByUserID(userID string) ([]*model.URL, error
 }
 
 func (r *InMemoryURLRepository) MarkAsDeleted(ctx context.Context, userID string, ids []string) error {
-	// Заглушка
+	if len(ids) == 0 {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, id := range ids {
+		if url, ok := r.data[id]; ok {
+			if url.UserID == userID {
+				url.IsDeleted = true
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -273,6 +287,23 @@ func (r *FileURLRepository) CreateBatch(urls []*model.URL) error {
 }
 
 func (r *FileURLRepository) MarkAsDeleted(ctx context.Context, userID string, ids []string) error {
-	// заглушка
+	if len(ids) == 0 {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, id := range ids {
+		if url, ok := r.data[id]; ok {
+			if url.UserID == userID {
+				url.IsDeleted = true
+			}
+		}
+	}
+	if err := r.saveToFile(); err != nil {
+		return fmt.Errorf("failed to save deleted flags to file: %w", err)
+	}
+
 	return nil
 }

@@ -80,11 +80,11 @@ func IsURLConflictError(err error) bool {
 }
 
 func (r *PostgresURLRepository) FindByID(id string) (*model.URL, error) {
-	query := `SELECT id, original_url, short_url FROM urls WHERE id = $1`
+	query := `SELECT id, original_url, short_url, user_id, is_deleted FROM urls WHERE id = $1`
 	row := r.db.QueryRow(query, id)
 
 	var url model.URL
-	err := row.Scan(&url.ID, &url.Original, &url.Short)
+	err := row.Scan(&url.ID, &url.Original, &url.Short, &url.UserID, &url.IsDeleted)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -95,11 +95,11 @@ func (r *PostgresURLRepository) FindByID(id string) (*model.URL, error) {
 }
 
 func (r *PostgresURLRepository) FindByOriginalURL(originalURL string) (*model.URL, error) {
-	query := `SELECT id, original_url, short_url FROM urls WHERE original_url = $1`
+	query := `SELECT id, original_url, short_url, user_id, is_deleted FROM urls WHERE original_url = $1`
 	row := r.db.QueryRow(query, originalURL)
 
 	var url model.URL
-	err := row.Scan(&url.ID, &url.Original, &url.Short)
+	err := row.Scan(&url.ID, &url.Original, &url.Short, &url.UserID, &url.IsDeleted)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -110,7 +110,7 @@ func (r *PostgresURLRepository) FindByOriginalURL(originalURL string) (*model.UR
 }
 
 func (r *PostgresURLRepository) FindByUserID(userID string) ([]*model.URL, error) {
-	query := `SELECT id, original_url, short_url, user_id FROM urls WHERE user_id = $1`
+	query := `SELECT id, original_url, short_url, user_id, is_deleted FROM urls WHERE user_id = $1`
 
 	rows, err := r.db.Query(query, userID)
 	if err != nil {
@@ -121,7 +121,7 @@ func (r *PostgresURLRepository) FindByUserID(userID string) ([]*model.URL, error
 	var res []*model.URL
 	for rows.Next() {
 		var url model.URL
-		if err := rows.Scan(&url.ID, &url.Original, &url.Short, &url.UserID); err != nil {
+		if err := rows.Scan(&url.ID, &url.Original, &url.Short, &url.UserID, &url.IsDeleted); err != nil {
 			return nil, err
 		}
 		res = append(res, &url)
