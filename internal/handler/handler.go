@@ -37,15 +37,7 @@ func (h *Handlers) ShortenURL(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "URL cannot be empty"})
 		return
 	}
-	rawCookie, _ := c.Cookie(auth.CookieName())
-	userID, newToken, err := auth.GetOrCreateUserIDFromCookie(rawCookie)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
-		return
-	}
-	if newToken != "" {
-		c.SetCookie(auth.CookieName(), newToken, 0, "/", "", false, true)
-	}
+	userID := c.GetString(auth.ContextUserIDKey)
 
 	url, err := h.service.ShortenURL(c.Request.Context(), originalURL, userID)
 	if err != nil {
@@ -54,7 +46,6 @@ func (h *Handlers) ShortenURL(c *gin.Context) {
 			c.String(http.StatusConflict, url.Short)
 			return
 		}
-
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": http.StatusText(http.StatusInternalServerError),
 		})
@@ -118,15 +109,7 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 		return
 	}
 
-	rawCookie, _ := c.Cookie(auth.CookieName())
-	userID, newToken, err := auth.GetOrCreateUserIDFromCookie(rawCookie)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
-		return
-	}
-	if newToken != "" {
-		c.SetCookie(auth.CookieName(), newToken, 0, "/", "", false, true)
-	}
+	userID := c.GetString(auth.ContextUserIDKey)
 
 	url, err := h.service.ShortenURL(c.Request.Context(), req.URL, userID)
 	if err != nil {
@@ -189,18 +172,9 @@ func (h *Handlers) ShortenURLBatch(c *gin.Context) {
 		}
 	}
 
-	rawCookie, _ := c.Cookie(auth.CookieName())
-	userID, newToken, err := auth.GetOrCreateUserIDFromCookie(rawCookie)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
-		return
-	}
-	if newToken != "" {
-		c.SetCookie(auth.CookieName(), newToken, 0, "/", "", false, true)
-	}
+	userID := c.GetString(auth.ContextUserIDKey)
 
 	responses, err := h.service.ShortenURLBatch(c.Request.Context(), batch, userID)
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": http.StatusText(http.StatusInternalServerError),
@@ -219,27 +193,7 @@ func (h *Handlers) ShortenURLBatch(c *gin.Context) {
 }
 
 func (h *Handlers) GetUserURLs(c *gin.Context) {
-	rawCookie, err := c.Cookie(auth.CookieName())
-
-	var userID string
-	var newToken string
-
-	if err != nil || rawCookie == "" {
-		userID, newToken, err = auth.GetOrCreateUserIDFromCookie("")
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
-			return
-		}
-		if newToken != "" {
-			c.SetCookie(auth.CookieName(), newToken, 0, "/", "", false, true)
-		}
-	} else {
-		userID, err = auth.GetUserIDFromCookieStrict(rawCookie)
-		if err != nil || userID == "" {
-			c.Status(http.StatusUnauthorized)
-			return
-		}
-	}
+	userID := c.GetString(auth.ContextUserIDKey)
 
 	urls, err := h.service.FindByUserID(c.Request.Context(), userID)
 	if err != nil {
@@ -272,17 +226,7 @@ func (h *Handlers) DeleteUserURLs(c *gin.Context) {
 		return
 	}
 
-	rawCookie, err := c.Cookie(auth.CookieName())
-	if err != nil {
-		c.Status(http.StatusUnauthorized)
-		return
-	}
-
-	userID, err := auth.GetUserIDFromCookieStrict(rawCookie)
-	if err != nil || userID == "" {
-		c.Status(http.StatusUnauthorized)
-		return
-	}
+	userID := c.GetString(auth.ContextUserIDKey)
 
 	var ids []string
 	if err := c.ShouldBindJSON(&ids); err != nil {

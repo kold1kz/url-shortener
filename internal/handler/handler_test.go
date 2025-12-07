@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"url-shortener/internal/auth"
+	"url-shortener/internal/middleware"
 	"url-shortener/internal/model"
 )
 
@@ -110,16 +111,31 @@ func (m *MockService) DeleteUserURLs(ctx context.Context, userID string, ids []s
 	return nil
 }
 
+func (m *MockService) Close() error {
+	return nil
+}
+
+func (m *MockServiceWithError) Close() error {
+	return nil
+}
+
+func (m *MockServiceEmptyUserURLs) Close() error {
+	return nil
+}
+
 func setupGinRouter(handler *Handlers) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	router.POST("/", handler.ShortenURL)
-	router.GET("/:id", handler.GetOriginalURL)
-	router.POST("/api/shorten", handler.ShortenJSONUrl)
-	router.POST("/api/shorten/batch", handler.ShortenURLBatch)
-	router.GET("/api/user/urls", handler.GetUserURLs)
-	router.DELETE("/api/user/urls", handler.DeleteUserURLs)
+	authGroup := router.Group("/")
+	authGroup.Use(middleware.UserAuth())
+
+	authGroup.POST("/", handler.ShortenURL)
+	authGroup.GET("/:id", handler.GetOriginalURL)
+	authGroup.POST("/api/shorten", handler.ShortenJSONUrl)
+	authGroup.POST("/api/shorten/batch", handler.ShortenURLBatch)
+	authGroup.GET("/api/user/urls", handler.GetUserURLs)
+	authGroup.DELETE("/api/user/urls", handler.DeleteUserURLs)
 
 	return router
 }

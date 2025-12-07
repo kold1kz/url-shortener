@@ -59,6 +59,9 @@ func (r *InMemoryURLRepository) CreateBatch(urls []*model.URL) error {
 		}
 		r.data[url.ID] = url
 		r.originalURLs[url.Original] = url.ID
+		if url.UserID != "" {
+			r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+		}
 	}
 
 	return nil
@@ -277,6 +280,9 @@ func (r *FileURLRepository) CreateBatch(urls []*model.URL) error {
 		}
 		r.data[url.ID] = url
 		r.originalURLs[url.Original] = url.ID
+		if url.UserID != "" {
+			r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+		}
 	}
 
 	if err := r.saveToFile(); err != nil {

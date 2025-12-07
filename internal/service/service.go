@@ -23,6 +23,7 @@ type URLService interface {
 	ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error)
 	FindByUserID(ctx context.Context, userID string) ([]*model.URL, error)
 	DeleteUserURLs(ctx context.Context, userID string, ids []string) error
+	Close() error
 }
 
 type deleteRequest struct {
@@ -34,6 +35,7 @@ type urlService struct {
 	repo     repository.URLRepository
 	baseURL  string
 	deleteCh chan deleteRequest
+	stopCh   chan struct{}
 }
 
 func NewURLService(repo repository.URLRepository, baseURL string) URLService {
@@ -41,6 +43,7 @@ func NewURLService(repo repository.URLRepository, baseURL string) URLService {
 		repo:     repo,
 		baseURL:  baseURL,
 		deleteCh: make(chan deleteRequest, 1024),
+		stopCh:   make(chan struct{}),
 	}
 
 	go s.deleteWorker()
@@ -163,6 +166,19 @@ func (s *urlService) deleteWorker() {
 
 	batches := make(map[string][]string)
 
+	flush := func() {
+		for userID, ids := range batches {
+			if len(ids) == 0 {
+				continue
+			}
+			if err := s.repo.MarkAsDeleted(context.Background(), userID, ids); err != nil {
+				log.Println("failed to mark URLs as deleted", "userID", userID, "ids", ids, "err", err)
+				continue
+			}
+		}
+		batches = make(map[string][]string)
+	}
+
 	for {
 		select {
 		case req := <-s.deleteCh:
@@ -175,19 +191,18 @@ func (s *urlService) deleteWorker() {
 			if len(batches) == 0 {
 				continue
 			}
+			flush()
 
-			for userID, ids := range batches {
-				if len(ids) == 0 {
-					continue
-				}
-
-				if err := s.repo.MarkAsDeleted(context.Background(), userID, ids); err != nil {
-					log.Println("failed to mark URLs as deleted", userID, ids, err)
-					continue
-				}
+		case <-s.stopCh:
+			if len(batches) > 0 {
+				flush()
 			}
-
-			batches = make(map[string][]string)
+			return
 		}
 	}
+}
+
+func (s *urlService) Close() error {
+	close(s.stopCh)
+	return nil
 }

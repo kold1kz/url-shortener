@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"url-shortener/internal/auth"
 )
 
 func HTTPLoggerMiddleware(logger *zap.SugaredLogger) gin.HandlerFunc {
@@ -136,4 +137,35 @@ func shouldCompress(contentType string) bool {
 	return strings.Contains(contentType, "application/json") ||
 		strings.Contains(contentType, "text/html") ||
 		strings.Contains(contentType, "text/plain")
+}
+
+func UserAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rawCookie, err := c.Cookie(auth.CookieName())
+
+		if err != nil || rawCookie == "" {
+			userID, newToken, err := auth.GetOrCreateUserIDFromCookie("")
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
+				c.Abort()
+				return
+			}
+			if newToken != "" {
+				c.SetCookie(auth.CookieName(), newToken, 0, "/", "", false, true)
+			}
+			c.Set(auth.ContextUserIDKey, userID)
+			c.Next()
+			return
+		}
+
+		userID, err := auth.GetUserIDFromCookieStrict(rawCookie)
+		if err != nil || userID == "" {
+			c.Status(http.StatusUnauthorized)
+			c.Abort()
+			return
+		}
+
+		c.Set(auth.ContextUserIDKey, userID)
+		c.Next()
+	}
 }

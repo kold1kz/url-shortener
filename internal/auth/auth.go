@@ -7,13 +7,23 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/url"
+	"os"
 	"strings"
 )
 
 const (
-	cookieName = "auth"
-	secretKey  = "tipokey"
+	cookieName       = "auth"
+	ContextUserIDKey = "userID"
 )
+
+var secretKey = getEnvOrDefault("SECRETKEY", "debugkey")
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
 
 func CookieName() string {
 	return cookieName

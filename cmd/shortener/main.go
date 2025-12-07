@@ -58,15 +58,19 @@ func main() {
 	router.Use(middleware.GzipMiddleware())
 	router.Use(middleware.HTTPLoggerMiddleware(logger))
 
-	// Регистрируем обработчики
-	router.POST("/", handlers.ShortenURL)
-	router.GET("/:id", handlers.GetOriginalURL)
-	// Регистрируем обработчики JSON
-	router.POST("/api/shorten", handlers.ShortenJSONUrl)
-	router.POST("/api/shorten/batch", handlers.ShortenURLBatch)
+	//Добавляем авторизацию
+	authGroup := router.Group("/")
+	authGroup.Use(middleware.UserAuth())
 
-	router.GET("/api/user/urls", handlers.GetUserURLs)
-	router.DELETE("/api/user/urls", handlers.DeleteUserURLs)
+	// Регистрируем обработчики
+	authGroup.POST("/", handlers.ShortenURL)
+	authGroup.GET("/:id", handlers.GetOriginalURL)
+	// Регистрируем обработчики JSON
+	authGroup.POST("/api/shorten", handlers.ShortenJSONUrl)
+	authGroup.POST("/api/shorten/batch", handlers.ShortenURLBatch)
+
+	authGroup.GET("/api/user/urls", handlers.GetUserURLs)
+	authGroup.DELETE("/api/user/urls", handlers.DeleteUserURLs)
 
 	// Регистрируем обработчик для бд
 	pingHandler := handler.NewPingHandler(db)
