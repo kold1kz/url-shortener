@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log"
+	"sync"
 	"time"
 	"url-shortener/internal/model"
 	"url-shortener/internal/repository"
@@ -32,19 +34,65 @@ type deleteRequest struct {
 }
 
 type urlService struct {
-	repo     repository.URLRepository
-	baseURL  string
-	deleteCh chan deleteRequest
+	repo    repository.URLRepository
+	baseURL string
+
+	inputChs []chan deleteRequest
+	bufferCh <-chan deleteRequest
 	stopCh   chan struct{}
 }
 
+func fanInDeleteRequests(done <-chan struct{}, chans ...<-chan deleteRequest) <-chan deleteRequest {
+	out := make(chan deleteRequest)
+
+	var wg sync.WaitGroup
+	for _, ch := range chans {
+		c := ch
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for req := range c {
+				select {
+				case <-done:
+					return
+				case out <- req:
+				}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+
+	return out
+}
+
+func fnv32(s string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return h.Sum32()
+}
+
 func NewURLService(repo repository.URLRepository, baseURL string) URLService {
+	const workers = 4
+
 	s := &urlService{
 		repo:     repo,
 		baseURL:  baseURL,
-		deleteCh: make(chan deleteRequest, 1024),
+		inputChs: make([]chan deleteRequest, workers),
 		stopCh:   make(chan struct{}),
 	}
+
+	inputs := make([]<-chan deleteRequest, 0, workers)
+	for i := 0; i < workers; i++ {
+		ch := make(chan deleteRequest, 64)
+		s.inputChs[i] = ch
+		inputs = append(inputs, ch)
+	}
+
+	s.bufferCh = fanInDeleteRequests(s.stopCh, inputs...)
 
 	go s.deleteWorker()
 
@@ -151,8 +199,10 @@ func (s *urlService) DeleteUserURLs(ctx context.Context, userID string, ids []st
 		ids:    ids,
 	}
 
+	idx := fnv32(userID) % uint32(len(s.inputChs))
+
 	select {
-	case s.deleteCh <- req:
+	case s.inputChs[idx] <- req:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -181,7 +231,13 @@ func (s *urlService) deleteWorker() {
 
 	for {
 		select {
-		case req := <-s.deleteCh:
+		case req, ok := <-s.bufferCh:
+			if !ok {
+				if len(batches) > 0 {
+					flush()
+				}
+				return
+			}
 			if len(req.ids) == 0 {
 				continue
 			}
@@ -203,6 +259,9 @@ func (s *urlService) deleteWorker() {
 }
 
 func (s *urlService) Close() error {
+	for _, ch := range s.inputChs {
+		close(ch)
+	}
 	close(s.stopCh)
 	return nil
 }
