@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,18 +16,22 @@ type URLRepository interface {
 	FindByID(id string) (*model.URL, error)
 	FindByOriginalURL(originalURL string) (*model.URL, error)
 	CreateBatch(urls []*model.URL) error
+	FindByUserID(userID string) ([]*model.URL, error)
+	MarkAsDeleted(ctx context.Context, userID string, ids []string) error
 }
 
 type InMemoryURLRepository struct {
 	mu           sync.RWMutex
 	data         map[string]*model.URL
 	originalURLs map[string]string
+	userURLs     map[string][]*model.URL
 }
 
 func NewInMemoryURLRepository() *InMemoryURLRepository {
 	return &InMemoryURLRepository{
 		data:         make(map[string]*model.URL),
 		originalURLs: make(map[string]string),
+		userURLs:     make(map[string][]*model.URL),
 	}
 }
 
@@ -38,12 +43,34 @@ func (r *InMemoryURLRepository) Create(url *model.URL) error {
 	}
 	r.data[url.ID] = url
 	r.originalURLs[url.Original] = url.ID
+	if url.UserID != "" {
+		r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+	}
+	return nil
+}
+
+func (r *InMemoryURLRepository) CreateBatch(urls []*model.URL) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, url := range urls {
+		if _, exists := r.originalURLs[url.Original]; exists {
+			continue
+		}
+		r.data[url.ID] = url
+		r.originalURLs[url.Original] = url.ID
+		if url.UserID != "" {
+			r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+		}
+	}
+
 	return nil
 }
 
 func (r *InMemoryURLRepository) FindByID(id string) (*model.URL, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	url, exists := r.data[id]
 	if !exists {
 		return nil, nil
@@ -67,17 +94,48 @@ func (r *InMemoryURLRepository) FindByOriginalURL(originalURL string) (*model.UR
 	return url, nil
 }
 
+func (r *InMemoryURLRepository) FindByUserID(userID string) ([]*model.URL, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	urls := r.userURLs[userID]
+	res := make([]*model.URL, len(urls))
+	copy(res, urls)
+	return res, nil
+}
+
+func (r *InMemoryURLRepository) MarkAsDeleted(ctx context.Context, userID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, id := range ids {
+		if url, ok := r.data[id]; ok {
+			if url.UserID == userID {
+				url.IsDeleted = true
+			}
+		}
+	}
+
+	return nil
+}
+
 type FileURLRepository struct {
 	mu           sync.RWMutex
 	data         map[string]*model.URL
 	originalURLs map[string]string
 	filePath     string
+	userURLs     map[string][]*model.URL
 }
 
 func NewFileURLRepository(filePath string) (*FileURLRepository, error) {
 	repo := &FileURLRepository{
 		data:         make(map[string]*model.URL),
 		originalURLs: make(map[string]string),
+		userURLs:     make(map[string][]*model.URL),
 		filePath:     filePath,
 	}
 
@@ -114,6 +172,10 @@ func (r *FileURLRepository) loadFromFile() error {
 		url := &urls[i]
 		r.data[url.ID] = url
 		r.originalURLs[url.Original] = url.ID
+
+		if url.UserID != "" {
+			r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+		}
 	}
 
 	return nil
@@ -152,7 +214,9 @@ func (r *FileURLRepository) Create(url *model.URL) error {
 
 	r.data[url.ID] = url
 	r.originalURLs[url.Original] = url.ID
-
+	if url.UserID != "" {
+		r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+	}
 	if err := r.saveToFile(); err != nil {
 		// Откатываем изменения если сохранение не удалось
 		delete(r.data, url.ID)
@@ -192,23 +256,18 @@ func (r *FileURLRepository) FindByOriginalURL(originalURL string) (*model.URL, e
 	return url, nil
 }
 
-func (r *FileURLRepository) Close() error {
-	return r.saveToFile()
+func (r *FileURLRepository) FindByUserID(userID string) ([]*model.URL, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	urls := r.userURLs[userID]
+	res := make([]*model.URL, len(urls))
+	copy(res, urls)
+	return res, nil
 }
 
-func (r *InMemoryURLRepository) CreateBatch(urls []*model.URL) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for _, url := range urls {
-		if _, exists := r.originalURLs[url.Original]; exists {
-			continue
-		}
-		r.data[url.ID] = url
-		r.originalURLs[url.Original] = url.ID
-	}
-
-	return nil
+func (r *FileURLRepository) Close() error {
+	return r.saveToFile()
 }
 
 func (r *FileURLRepository) CreateBatch(urls []*model.URL) error {
@@ -221,10 +280,35 @@ func (r *FileURLRepository) CreateBatch(urls []*model.URL) error {
 		}
 		r.data[url.ID] = url
 		r.originalURLs[url.Original] = url.ID
+		if url.UserID != "" {
+			r.userURLs[url.UserID] = append(r.userURLs[url.UserID], url)
+		}
 	}
 
 	if err := r.saveToFile(); err != nil {
 		return fmt.Errorf("failed to save batch to file: %w", err)
+	}
+
+	return nil
+}
+
+func (r *FileURLRepository) MarkAsDeleted(ctx context.Context, userID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, id := range ids {
+		if url, ok := r.data[id]; ok {
+			if url.UserID == userID {
+				url.IsDeleted = true
+			}
+		}
+	}
+	if err := r.saveToFile(); err != nil {
+		return fmt.Errorf("failed to save deleted flags to file: %w", err)
 	}
 
 	return nil

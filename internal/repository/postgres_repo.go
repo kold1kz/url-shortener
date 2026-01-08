@@ -1,12 +1,14 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/lib/pq"
 	"url-shortener/internal/model"
 )
 
@@ -47,8 +49,8 @@ func checkTableExists(db *sql.DB) error {
 }
 
 func (r *PostgresURLRepository) Create(url *model.URL) error {
-	query := `INSERT INTO urls (id, original_url, short_url) VALUES ($1, $2, $3)`
-	_, err := r.db.Exec(query, url.ID, url.Original, url.Short)
+	query := `INSERT INTO urls (id, original_url, short_url, user_id) VALUES ($1, $2, $3, $4)`
+	_, err := r.db.Exec(query, url.ID, url.Original, url.Short, url.UserID)
 	if err != nil {
 		// Проверяем, является ли ошибка нарушением уникальности
 		var pgErr *pgconn.PgError
@@ -78,11 +80,11 @@ func IsURLConflictError(err error) bool {
 }
 
 func (r *PostgresURLRepository) FindByID(id string) (*model.URL, error) {
-	query := `SELECT id, original_url, short_url FROM urls WHERE id = $1`
+	query := `SELECT id, original_url, short_url, user_id, is_deleted FROM urls WHERE id = $1`
 	row := r.db.QueryRow(query, id)
 
 	var url model.URL
-	err := row.Scan(&url.ID, &url.Original, &url.Short)
+	err := row.Scan(&url.ID, &url.Original, &url.Short, &url.UserID, &url.IsDeleted)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -93,11 +95,11 @@ func (r *PostgresURLRepository) FindByID(id string) (*model.URL, error) {
 }
 
 func (r *PostgresURLRepository) FindByOriginalURL(originalURL string) (*model.URL, error) {
-	query := `SELECT id, original_url, short_url FROM urls WHERE original_url = $1`
+	query := `SELECT id, original_url, short_url, user_id, is_deleted FROM urls WHERE original_url = $1`
 	row := r.db.QueryRow(query, originalURL)
 
 	var url model.URL
-	err := row.Scan(&url.ID, &url.Original, &url.Short)
+	err := row.Scan(&url.ID, &url.Original, &url.Short, &url.UserID, &url.IsDeleted)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -105,6 +107,26 @@ func (r *PostgresURLRepository) FindByOriginalURL(originalURL string) (*model.UR
 		return nil, err
 	}
 	return &url, nil
+}
+
+func (r *PostgresURLRepository) FindByUserID(userID string) ([]*model.URL, error) {
+	query := `SELECT id, original_url, short_url, user_id, is_deleted FROM urls WHERE user_id = $1`
+
+	rows, err := r.db.Query(query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []*model.URL
+	for rows.Next() {
+		var url model.URL
+		if err := rows.Scan(&url.ID, &url.Original, &url.Short, &url.UserID, &url.IsDeleted); err != nil {
+			return nil, err
+		}
+		res = append(res, &url)
+	}
+	return res, rows.Err()
 }
 
 func (r *PostgresURLRepository) Close() error {
@@ -153,6 +175,19 @@ func (r *PostgresURLRepository) CreateBatch(urls []*model.URL) error {
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+func (r *PostgresURLRepository) MarkAsDeleted(ctx context.Context, userID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	query := "UPDATE urls SET is_deleted = TRUE WHERE user_id = $1 AND id = ANY($2)"
+	if _, err := r.db.ExecContext(ctx, query, userID, pq.Array(ids)); err != nil {
+		return fmt.Errorf("mark urls as deleted: %w", err)
 	}
 
 	return nil

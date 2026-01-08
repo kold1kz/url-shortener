@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
@@ -10,53 +11,77 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"url-shortener/internal/auth"
+	"url-shortener/internal/middleware"
 	"url-shortener/internal/model"
 )
 
-type MockService struct{}
+type MockService struct {
+	deletedUserID string
+	deletedIDs    []string
+}
 
 type MockServiceWithError struct{}
 
-func (m *MockServiceWithError) ShortenURL(original string) (*model.URL, error) {
+type MockServiceEmptyUserURLs struct{}
+
+func (m *MockServiceWithError) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
 	return nil, errors.New("service error")
 }
 
-func (m *MockServiceWithError) GetOriginalURL(id string) (string, error) {
+func (m *MockServiceWithError) GetOriginalURL(ctx context.Context, id string) (string, error) {
 	return "", errors.New("service error")
 }
 
-func (m *MockServiceWithError) ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error) {
+func (m *MockServiceWithError) ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error) {
 	return nil, errors.New("batch processing failed")
 }
 
-func (m *MockService) ShortenURL(original string) (*model.URL, error) {
+func (m *MockServiceWithError) FindByUserID(ctx context.Context, userID string) ([]*model.URL, error) {
+	return nil, errors.New("service error")
+}
+
+func (m *MockServiceEmptyUserURLs) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
+	return nil, nil
+}
+
+func (m *MockServiceEmptyUserURLs) GetOriginalURL(ctx context.Context, id string) (string, error) {
+	return "", nil
+}
+
+func (m *MockServiceEmptyUserURLs) ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error) {
+	return nil, nil
+}
+
+func (m *MockServiceEmptyUserURLs) FindByUserID(ctx context.Context, userID string) ([]*model.URL, error) {
+	return []*model.URL{}, nil
+}
+
+func (m *MockServiceWithError) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+	return nil
+}
+
+func (m *MockServiceEmptyUserURLs) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+	return nil
+}
+
+func (m *MockService) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
 	return &model.URL{
 		ID:       "abc123",
 		Original: original,
 		Short:    "http://localhost:8080/abc123",
+		UserID:   userID,
 	}, nil
 }
 
-func (m *MockService) GetOriginalURL(id string) (string, error) {
+func (m *MockService) GetOriginalURL(ctx context.Context, id string) (string, error) {
 	if id == "nonexistent" {
 		return "", errors.New("not found")
 	}
 	return "https://example.com", nil
 }
 
-func setupGinRouter(handler *Handlers) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-
-	router.POST("/", handler.ShortenURL)
-	router.GET("/:id", handler.GetOriginalURL)
-	router.POST("/api/shorten", handler.ShortenJSONUrl)
-	router.POST("/api/shorten/batch", handler.ShortenURLBatch)
-
-	return router
-}
-
-func (m *MockService) ShortenURLBatch(batch []model.BatchRequest) ([]model.BatchResponse, error) {
+func (m *MockService) ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error) {
 	responses := make([]model.BatchResponse, 0, len(batch))
 
 	for _, item := range batch {
@@ -67,6 +92,52 @@ func (m *MockService) ShortenURLBatch(batch []model.BatchRequest) ([]model.Batch
 	}
 
 	return responses, nil
+}
+
+func (m *MockService) FindByUserID(ctx context.Context, userID string) ([]*model.URL, error) {
+	return []*model.URL{
+		{
+			ID:       "1",
+			Original: "https://example.com/1",
+			Short:    "http://localhost:8080/1",
+			UserID:   userID,
+		},
+	}, nil
+}
+
+func (m *MockService) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+	m.deletedUserID = userID
+	m.deletedIDs = append([]string(nil), ids...)
+	return nil
+}
+
+func (m *MockService) Close() error {
+	return nil
+}
+
+func (m *MockServiceWithError) Close() error {
+	return nil
+}
+
+func (m *MockServiceEmptyUserURLs) Close() error {
+	return nil
+}
+
+func setupGinRouter(handler *Handlers) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	authGroup := router.Group("/")
+	authGroup.Use(middleware.UserAuth())
+
+	authGroup.POST("/", handler.ShortenURL)
+	authGroup.GET("/:id", handler.GetOriginalURL)
+	authGroup.POST("/api/shorten", handler.ShortenJSONUrl)
+	authGroup.POST("/api/shorten/batch", handler.ShortenURLBatch)
+	authGroup.GET("/api/user/urls", handler.GetUserURLs)
+	authGroup.DELETE("/api/user/urls", handler.DeleteUserURLs)
+
+	return router
 }
 
 func TestShortenURL(t *testing.T) {
@@ -240,7 +311,7 @@ func TestGetOriginalURL(t *testing.T) {
 			url:    "/nonexistent",
 			want: want{
 				statusCode: http.StatusInternalServerError,
-				body:       `{"error":"Invalid server error"}`,
+				body:       `{"error":"Internal Server Error"}`,
 			},
 		},
 		{
@@ -684,6 +755,332 @@ func TestShortenURLBatch_ValidationErrors(t *testing.T) {
 
 			bodyStr := strings.TrimSpace(string(bodyResult))
 			assert.Equal(t, test.want.body, bodyStr)
+		})
+	}
+}
+
+func TestGetUserURLs_NoCookieAndEmpty(t *testing.T) {
+	type want struct {
+		statusCode   int
+		body         string
+		expectCookie bool
+	}
+
+	tests := []struct {
+		name string
+	}{
+		{
+			name: "no_cookie_new_user_no_urls",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// сервис, который возвращает пустой список ссылок
+			mockService := &MockServiceEmptyUserURLs{}
+			h := NewHandler(mockService)
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			// Новый пользователь без куки и без ссылок -> 204 No Content
+			assert.Equal(t, http.StatusNoContent, res.StatusCode)
+
+			// При этом сервер должен выдать auth-куку
+			setCookie := res.Header.Get("Set-Cookie")
+			assert.NotEmpty(t, setCookie)
+			assert.Contains(t, setCookie, auth.CookieName()+"=")
+		})
+	}
+}
+
+func TestGetUserURLs_Success(t *testing.T) {
+	type want struct {
+		statusCode  int
+		body        string
+		contentType string
+	}
+
+	tests := []struct {
+		name string
+	}{
+		{
+			name: "valid_cookie_with_urls",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockService := &MockService{}
+			h := NewHandler(mockService)
+			router := setupGinRouter(h)
+
+			// генерируем валидную куку так же, как делает auth
+			_, token, err := auth.GetOrCreateUserIDFromCookie("")
+			assert.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+			req.AddCookie(&http.Cookie{
+				Name:  auth.CookieName(),
+				Value: token,
+			})
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, http.StatusOK, res.StatusCode)
+			assert.Equal(t, "application/json; charset=utf-8", res.Header.Get("Content-Type"))
+
+			bodyBytes, err := io.ReadAll(res.Body)
+			assert.NoError(t, err)
+
+			bodyStr := strings.TrimSpace(string(bodyBytes))
+
+			// ожидаемый ответ от MockService.FindByUserID
+			expected := `[{"short_url":"http://localhost:8080/1","original_url":"https://example.com/1"}]`
+			assert.JSONEq(t, expected, bodyStr)
+		})
+	}
+}
+
+func TestGetUserURLs_ErrorCases(t *testing.T) {
+	type want struct {
+		statusCode int
+		body       string
+	}
+
+	tests := []struct {
+		name       string
+		cookieVal  string
+		useService string // "normal" или "error"
+		want       want
+	}{
+		{
+			name:       "invalid_cookie_value",
+			cookieVal:  "broken-token",
+			useService: "normal",
+			want: want{
+				statusCode: http.StatusUnauthorized,
+				body:       "",
+			},
+		},
+		{
+			name:       "internal_error_from_service",
+			useService: "error",
+			// сюда поставим валидную куку внутри теста
+			want: want{
+				statusCode: http.StatusInternalServerError,
+				body:       `{"error":"Internal Server Error"}`,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var h *Handlers
+
+			switch test.useService {
+			case "error":
+				h = NewHandler(&MockServiceWithError{})
+			default:
+				h = NewHandler(&MockService{})
+			}
+
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+
+			// для кейса internal error — генерируем валидную куку
+			if test.useService == "error" {
+				_, token, err := auth.GetOrCreateUserIDFromCookie("")
+				assert.NoError(t, err)
+				req.AddCookie(&http.Cookie{
+					Name:  auth.CookieName(),
+					Value: token,
+				})
+			}
+
+			// для кейса invalid_cookie_value — используем битый токен
+			if test.cookieVal != "" {
+				req.AddCookie(&http.Cookie{
+					Name:  auth.CookieName(),
+					Value: test.cookieVal,
+				})
+			}
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, test.want.statusCode, res.StatusCode)
+
+			if test.want.body != "" {
+				bodyBytes, err := io.ReadAll(res.Body)
+				assert.NoError(t, err)
+				bodyStr := strings.TrimSpace(string(bodyBytes))
+				assert.Equal(t, test.want.body, bodyStr)
+			}
+		})
+	}
+}
+
+func TestDeleteUserURLs_Success(t *testing.T) {
+	type want struct {
+		statusCode int
+		body       string
+	}
+
+	tests := []struct {
+		name    string
+		method  string
+		body    string
+		headers map[string]string
+		want    want
+	}{
+		{
+			name:   "valid request with ids",
+			method: "DELETE",
+			body:   `["id1","id2","id3"]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusAccepted,
+				body:       "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := &MockService{}
+			h := NewHandler(mockService)
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(tt.method, "/api/user/urls", strings.NewReader(tt.body))
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+
+			_, token, err := auth.GetOrCreateUserIDFromCookie("")
+			assert.NoError(t, err)
+
+			req.AddCookie(&http.Cookie{
+				Name:  auth.CookieName(),
+				Value: token,
+			})
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, tt.want.statusCode, res.StatusCode)
+
+			bodyBytes, err := io.ReadAll(res.Body)
+			assert.NoError(t, err)
+			bodyStr := strings.TrimSpace(string(bodyBytes))
+			assert.Equal(t, tt.want.body, bodyStr)
+
+			assert.NotEmpty(t, mockService.deletedUserID)
+			assert.Equal(t, []string{"id1", "id2", "id3"}, mockService.deletedIDs)
+		})
+	}
+}
+
+func TestDeleteUserURLs_ValidationErrors(t *testing.T) {
+	type want struct {
+		statusCode int
+		body       string
+	}
+
+	tests := []struct {
+		name    string
+		method  string
+		body    string
+		headers map[string]string
+		want    want
+	}{
+		{
+			name:   "invalid content type",
+			method: "DELETE",
+			body:   `["id1","id2"]`,
+			headers: map[string]string{
+				"Content-Type": "text/plain",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid content type"}`,
+			},
+		},
+		{
+			name:   "invalid json format",
+			method: "DELETE",
+			body:   `not json`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Invalid JSON format"}`,
+			},
+		},
+		{
+			name:   "empty ids array",
+			method: "DELETE",
+			body:   `[]`,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			want: want{
+				statusCode: http.StatusBadRequest,
+				body:       `{"error":"Empty batch"}`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := &MockService{}
+			h := NewHandler(mockService)
+			router := setupGinRouter(h)
+
+			req := httptest.NewRequest(tt.method, "/api/user/urls", strings.NewReader(tt.body))
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+
+			_, token, err := auth.GetOrCreateUserIDFromCookie("")
+			assert.NoError(t, err)
+			req.AddCookie(&http.Cookie{
+				Name:  auth.CookieName(),
+				Value: token,
+			})
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, tt.want.statusCode, res.StatusCode)
+
+			bodyBytes, err := io.ReadAll(res.Body)
+			assert.NoError(t, err)
+			bodyStr := strings.TrimSpace(string(bodyBytes))
+			assert.Equal(t, tt.want.body, bodyStr)
 		})
 	}
 }

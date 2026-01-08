@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"log"
 	"url-shortener/internal/config"
 	"url-shortener/internal/database"
@@ -21,16 +22,19 @@ func loadConfig() *config.Config {
 	return cfg
 }
 
-func setupDatabase(cfg *config.Config) *database.DB {
+func setupDatabase(cfg *config.Config, logger *zap.SugaredLogger) *database.DB {
 	if cfg.DatabaseDSN == "" {
+		logger.Warn("DATABASE_DSN is empty, database will not be initialized")
 		return nil
 	}
 
 	db, err := database.NewDB(cfg.DatabaseDSN)
 	if err != nil {
-		log.Printf("Failed to connect to database: %v", err)
+		logger.Errorf("Failed to connect to database: %v", err)
+		return nil
 	}
-	log.Printf("Connected to PostgreSQL")
+
+	logger.Info("Connected to PostgreSQL")
 	return db
 }
 
@@ -41,7 +45,7 @@ func main() {
 	logger := middleware.InitLogger()
 	defer logger.Sync()
 
-	db := setupDatabase(cfg)
+	db := setupDatabase(cfg, logger)
 	if db != nil {
 		defer db.Close()
 	}
@@ -54,12 +58,19 @@ func main() {
 	router.Use(middleware.GzipMiddleware())
 	router.Use(middleware.HTTPLoggerMiddleware(logger))
 
+	//Добавляем авторизацию
+	authGroup := router.Group("/")
+	authGroup.Use(middleware.UserAuth())
+
 	// Регистрируем обработчики
-	router.POST("/", handlers.ShortenURL)
-	router.GET("/:id", handlers.GetOriginalURL)
+	authGroup.POST("/", handlers.ShortenURL)
+	authGroup.GET("/:id", handlers.GetOriginalURL)
 	// Регистрируем обработчики JSON
-	router.POST("/api/shorten", handlers.ShortenJSONUrl)
-	router.POST("/api/shorten/batch", handlers.ShortenURLBatch)
+	authGroup.POST("/api/shorten", handlers.ShortenJSONUrl)
+	authGroup.POST("/api/shorten/batch", handlers.ShortenURLBatch)
+
+	authGroup.GET("/api/user/urls", handlers.GetUserURLs)
+	authGroup.DELETE("/api/user/urls", handlers.DeleteUserURLs)
 
 	// Регистрируем обработчик для бд
 	pingHandler := handler.NewPingHandler(db)

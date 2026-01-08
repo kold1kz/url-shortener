@@ -2,9 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strings"
+	"url-shortener/internal/auth"
 	"url-shortener/internal/model"
 	"url-shortener/internal/service"
 )
@@ -35,16 +37,18 @@ func (h *Handlers) ShortenURL(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "URL cannot be empty"})
 		return
 	}
+	userID := c.GetString(auth.ContextUserIDKey)
 
-	url, err := h.service.ShortenURL(originalURL)
+	url, err := h.service.ShortenURL(c.Request.Context(), originalURL, userID)
 	if err != nil {
-		// Проверяем, это ошибка конфликта или другая ошибка
-		if strings.Contains(err.Error(), "URL already exists") {
+		if errors.Is(err, service.ErrURLAlreadyExists) {
 			c.Header("Content-Type", "text/plain")
 			c.String(http.StatusConflict, url.Short)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": http.StatusText(http.StatusInternalServerError),
+		})
 		return
 	}
 
@@ -61,9 +65,15 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 		return
 	}
 
-	originalURL, err := h.service.GetOriginalURL(id)
+	originalURL, err := h.service.GetOriginalURL(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid server error"})
+		if errors.Is(err, service.ErrURLDeleted) {
+			c.Status(http.StatusGone)
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": http.StatusText(http.StatusInternalServerError),
+		})
 		return
 	}
 
@@ -73,7 +83,6 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 	}
 
 	c.Header("Location", originalURL)
-	// если я правильно понял задания и здесь не нужен c.Redirect
 	c.String(http.StatusTemporaryRedirect, originalURL)
 }
 
@@ -100,15 +109,23 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 		return
 	}
 
-	url, err := h.service.ShortenURL(req.URL)
-	if err != nil {
-		resp := model.ShortenResponse{Result: url.Short}
+	userID := c.GetString(auth.ContextUserIDKey)
 
-		if strings.Contains(err.Error(), "URL already exists") {
+	url, err := h.service.ShortenURL(c.Request.Context(), req.URL, userID)
+	if err != nil {
+		resp := model.ShortenResponse{Result: ""}
+		if url != nil {
+			resp.Result = url.Short
+		}
+
+		if errors.Is(err, service.ErrURLAlreadyExists) {
 			c.JSON(http.StatusConflict, resp)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": http.StatusText(http.StatusInternalServerError),
+		})
 		return
 	}
 
@@ -128,7 +145,6 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 }
 
 func (h *Handlers) ShortenURLBatch(c *gin.Context) {
-	// Проверяем Content-Type
 	if c.ContentType() != "application/json" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
 		return
@@ -156,9 +172,13 @@ func (h *Handlers) ShortenURLBatch(c *gin.Context) {
 		}
 	}
 
-	responses, err := h.service.ShortenURLBatch(batch)
+	userID := c.GetString(auth.ContextUserIDKey)
+
+	responses, err := h.service.ShortenURLBatch(c.Request.Context(), batch, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URLs"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": http.StatusText(http.StatusInternalServerError),
+		})
 		return
 	}
 
@@ -170,4 +190,58 @@ func (h *Handlers) ShortenURLBatch(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode response"})
 		return
 	}
+}
+
+func (h *Handlers) GetUserURLs(c *gin.Context) {
+	userID := c.GetString(auth.ContextUserIDKey)
+
+	urls, err := h.service.FindByUserID(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": http.StatusText(http.StatusInternalServerError)})
+		return
+	}
+
+	resp := make([]model.UserURLResponse, 0, len(urls))
+	for _, u := range urls {
+		if u.IsDeleted {
+			continue
+		}
+		resp = append(resp, model.UserURLResponse{
+			ShortURL:    u.Short,
+			OriginalURL: u.Original,
+		})
+	}
+
+	if len(resp) == 0 {
+		c.Status(http.StatusNoContent)
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handlers) DeleteUserURLs(c *gin.Context) {
+	if c.ContentType() != "application/json" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
+		return
+	}
+
+	userID := c.GetString(auth.ContextUserIDKey)
+
+	var ids []string
+	if err := c.ShouldBindJSON(&ids); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+		return
+	}
+	if len(ids) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Empty batch"})
+		return
+	}
+
+	if err := h.service.DeleteUserURLs(c.Request.Context(), userID, ids); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": http.StatusText(http.StatusInternalServerError)})
+		return
+	}
+
+	c.Status(http.StatusAccepted)
 }
