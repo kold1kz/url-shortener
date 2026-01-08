@@ -60,7 +60,7 @@ func (h *Handlers) ShortenURL(c *gin.Context) {
 
 	if h.audit != nil {
 		h.audit.Publish(c.Request.Context(), audit.Event{
-			Ts:     time.Now().Unix(),
+			TS:     time.Now().Unix(),
 			Action: audit.ActionShorten,
 			UserID: userID,
 			URL:    originalURL,
@@ -100,7 +100,7 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 
 	if h.audit != nil {
 		h.audit.Publish(c.Request.Context(), audit.Event{
-			Ts:     time.Now().Unix(),
+			TS:     time.Now().Unix(),
 			Action: audit.ActionFollow,
 			UserID: userID,
 			URL:    originalURL,
@@ -164,7 +164,7 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 	}
 	if h.audit != nil {
 		h.audit.Publish(c.Request.Context(), audit.Event{
-			Ts:     time.Now().Unix(),
+			TS:     time.Now().Unix(),
 			Action: audit.ActionShorten,
 			UserID: userID,
 			URL:    req.URL,
