@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strings"
+	"time"
+	"url-shortener/internal/audit"
 	"url-shortener/internal/auth"
 	"url-shortener/internal/model"
 	"url-shortener/internal/service"
@@ -13,10 +15,11 @@ import (
 
 type Handlers struct {
 	service service.URLService
+	audit   *audit.Publisher
 }
 
-func NewHandler(service service.URLService) *Handlers {
-	return &Handlers{service: service}
+func NewHandler(service service.URLService, auditPub *audit.Publisher) *Handlers {
+	return &Handlers{service: service, audit: auditPub}
 }
 
 func (h *Handlers) ShortenURL(c *gin.Context) {
@@ -55,6 +58,14 @@ func (h *Handlers) ShortenURL(c *gin.Context) {
 	c.Header("Content-Type", "text/plain")
 	c.String(http.StatusCreated, url.Short)
 
+	if h.audit != nil {
+		h.audit.Publish(c.Request.Context(), audit.Event{
+			Ts:     time.Now().Unix(),
+			Action: audit.ActionShorten,
+			UserID: userID,
+			URL:    originalURL,
+		})
+	}
 }
 
 func (h *Handlers) GetOriginalURL(c *gin.Context) {
@@ -84,10 +95,21 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 
 	c.Header("Location", originalURL)
 	c.String(http.StatusTemporaryRedirect, originalURL)
+
+	userID := c.GetString(auth.ContextUserIDKey)
+
+	if h.audit != nil {
+		h.audit.Publish(c.Request.Context(), audit.Event{
+			Ts:     time.Now().Unix(),
+			Action: audit.ActionFollow,
+			UserID: userID,
+			URL:    originalURL,
+		})
+	}
 }
 
 func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
-	if c.ContentType() != "application/json" {
+	if !strings.Contains(c.ContentType(), "application/json") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
 		return
 	}
@@ -140,12 +162,19 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode response"})
 		return
 	}
-
+	if h.audit != nil {
+		h.audit.Publish(c.Request.Context(), audit.Event{
+			Ts:     time.Now().Unix(),
+			Action: audit.ActionShorten,
+			UserID: userID,
+			URL:    req.URL,
+		})
+	}
 	//c.JSON(http.StatusCreated, resp)
 }
 
 func (h *Handlers) ShortenURLBatch(c *gin.Context) {
-	if c.ContentType() != "application/json" {
+	if !strings.Contains(c.ContentType(), "application/json") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
 		return
 	}
@@ -221,7 +250,7 @@ func (h *Handlers) GetUserURLs(c *gin.Context) {
 }
 
 func (h *Handlers) DeleteUserURLs(c *gin.Context) {
-	if c.ContentType() != "application/json" {
+	if !strings.Contains(c.ContentType(), "application/json") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
 		return
 	}

@@ -183,7 +183,7 @@ func TestShortenURL(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			handler := NewHandler(mockService)
+			handler := NewHandler(mockService, nil)
 
 			router := setupGinRouter(handler)
 
@@ -255,7 +255,7 @@ func TestShortenUrlMoke(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService)
+			h := NewHandler(mockService, nil)
 
 			router := setupGinRouter(h)
 
@@ -328,7 +328,7 @@ func TestGetOriginalURL(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService)
+			h := NewHandler(mockService, nil)
 
 			router := setupGinRouter(h)
 
@@ -411,7 +411,7 @@ func TestShortenJsonURL(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			handler := NewHandler(mockService)
+			handler := NewHandler(mockService, nil)
 
 			router := setupGinRouter(handler)
 
@@ -483,7 +483,7 @@ func TestShortenJsonURLMoke(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService)
+			h := NewHandler(mockService, nil)
 
 			router := setupGinRouter(h)
 
@@ -591,7 +591,7 @@ func TestShortenURLBatch_Success(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService)
+			h := NewHandler(mockService, nil)
 
 			router := setupGinRouter(h)
 
@@ -732,7 +732,7 @@ func TestShortenURLBatch_ValidationErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			handler := NewHandler(mockService)
+			handler := NewHandler(mockService, nil)
 
 			router := setupGinRouter(handler)
 
@@ -778,7 +778,7 @@ func TestGetUserURLs_NoCookieAndEmpty(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			// сервис, который возвращает пустой список ссылок
 			mockService := &MockServiceEmptyUserURLs{}
-			h := NewHandler(mockService)
+			h := NewHandler(mockService, nil)
 			router := setupGinRouter(h)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
@@ -818,7 +818,7 @@ func TestGetUserURLs_Success(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService)
+			h := NewHandler(mockService, nil)
 			router := setupGinRouter(h)
 
 			// генерируем валидную куку так же, как делает auth
@@ -890,9 +890,9 @@ func TestGetUserURLs_ErrorCases(t *testing.T) {
 
 			switch test.useService {
 			case "error":
-				h = NewHandler(&MockServiceWithError{})
+				h = NewHandler(&MockServiceWithError{}, nil)
 			default:
-				h = NewHandler(&MockService{})
+				h = NewHandler(&MockService{}, nil)
 			}
 
 			router := setupGinRouter(h)
@@ -965,7 +965,7 @@ func TestDeleteUserURLs_Success(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService)
+			h := NewHandler(mockService, nil)
 			router := setupGinRouter(h)
 
 			req := httptest.NewRequest(tt.method, "/api/user/urls", strings.NewReader(tt.body))
@@ -1054,7 +1054,7 @@ func TestDeleteUserURLs_ValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService)
+			h := NewHandler(mockService, nil)
 			router := setupGinRouter(h)
 
 			req := httptest.NewRequest(tt.method, "/api/user/urls", strings.NewReader(tt.body))
