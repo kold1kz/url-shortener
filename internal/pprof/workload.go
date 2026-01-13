@@ -6,13 +6,13 @@ import (
 	"net/http"
 )
 
-func main() {
+func workload() {
 	url := "http://localhost:8080/api/shorten"
 	url2 := "http://localhost:8080/api/user/urls"
 
 	for i := 0; i < 1000; i++ {
 		// Тело запроса
-		body := fmt.Sprintf("{\"url\": \"https://example%s.com\"}", i)
+		body := fmt.Sprintf("{\"url\": \"https://example%d.com\"}", i)
 		jsonBody := []byte(body)
 
 		// Создаем запрос с телом
@@ -68,6 +68,6 @@ func main() {
 		n, _ := resp.Body.Read(bs)
 		fmt.Print(string(bs[:n]))
 	}
-
 	resp.Body.Close()
+	return
 }

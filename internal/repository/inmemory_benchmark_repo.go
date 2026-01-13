@@ -5,7 +5,7 @@ import (
 	"url-shortener/internal/model"
 )
 
-func BenchmarkInMemory_Create(b *testing.B) {
+func BenchmarkInMemoryCreate(b *testing.B) {
 	repo := NewInMemoryURLRepository()
 
 	b.ReportAllocs()
@@ -22,7 +22,7 @@ func BenchmarkInMemory_Create(b *testing.B) {
 	}
 }
 
-func BenchmarkInMemory_FindByID(b *testing.B) {
+func BenchmarkInMemoryFindByID(b *testing.B) {
 	repo := NewInMemoryURLRepository()
 	// prefill
 	for i := 0; i < 10000; i++ {

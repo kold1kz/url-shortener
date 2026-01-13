@@ -101,7 +101,8 @@ func TestInMemoryRepository_BasicFlow(t *testing.T) {
 	// Меняем слайс локально: добавляем элемент.
 	// Если репо вернул шареный слайс, это могло бы “протечь” внутрь.
 	orig = append(orig, &model.URL{ID: "x", Original: "https://x.com", Short: "http://s/x", UserID: "u1"})
-
+	orig2 := append(orig, &model.URL{ID: "x"})
+	_ = orig2
 	again, _ := repo.FindByUserID("u1")
 	if len(again) != 2 {
 		t.Fatalf("expected FindByUserID to return independent slice; got len=%d", len(again))
