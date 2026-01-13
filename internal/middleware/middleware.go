@@ -8,9 +8,18 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"url-shortener/internal/auth"
 )
+
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		// BestSpeed почти всегда достаточно и дешевле по CPU/памяти
+		w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
+		return w
+	},
+}
 
 func HTTPLoggerMiddleware(logger *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -55,13 +64,18 @@ type compressWriter struct {
 }
 
 func newCompressWriter(w gin.ResponseWriter) *compressWriter {
+	zw := gzipWriterPool.Get().(*gzip.Writer)
+	zw.Reset(w)
 	return &compressWriter{
 		ResponseWriter: w,
-		zw:             gzip.NewWriter(w),
+		zw:             zw,
 	}
 }
 
 func (c *compressWriter) Write(p []byte) (int, error) {
+	if c.Header().Get("Content-Type") == "" {
+		c.Header().Set("Content-Type", "application/octet-stream")
+	}
 	return c.zw.Write(p)
 }
 
@@ -70,7 +84,12 @@ func (c *compressWriter) WriteString(s string) (int, error) {
 }
 
 func (c *compressWriter) Close() error {
-	return c.zw.Close()
+	err := c.zw.Close()
+	c.zw.Reset(io.Discard)
+	gzipWriterPool.Put(c.zw)
+	c.zw = nil
+
+	return err
 }
 
 type compressReader struct {
@@ -110,13 +129,12 @@ func GzipMiddleware() gin.HandlerFunc {
 		sendsGzip := strings.Contains(contentEncoding, "gzip")
 
 		if supportsGzip {
-			contentType := c.GetHeader("Content-Type")
-			if shouldCompress(contentType) {
-				cw := newCompressWriter(c.Writer)
-				defer cw.Close()
-				c.Writer = cw
-				c.Header("Content-Encoding", "gzip")
-			}
+			cw := newCompressWriter(c.Writer)
+			defer cw.Close()
+
+			c.Writer = cw
+			c.Header("Content-Encoding", "gzip")
+			c.Header("Vary", "Accept-Encoding")
 		}
 
 		if sendsGzip {
@@ -133,11 +151,11 @@ func GzipMiddleware() gin.HandlerFunc {
 	}
 }
 
-func shouldCompress(contentType string) bool {
-	return strings.Contains(contentType, "application/json") ||
-		strings.Contains(contentType, "text/html") ||
-		strings.Contains(contentType, "text/plain")
-}
+//func shouldCompress(contentType string) bool {
+//	return strings.Contains(contentType, "application/json") ||
+//		strings.Contains(contentType, "text/html") ||
+//		strings.Contains(contentType, "text/plain")
+//}
 
 func UserAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {

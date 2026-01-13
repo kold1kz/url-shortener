@@ -7,6 +7,7 @@ import (
 	"url-shortener/internal/config"
 	"url-shortener/internal/handler"
 	"url-shortener/internal/middleware"
+	"url-shortener/internal/pprof"
 	"url-shortener/internal/repository"
 	"url-shortener/internal/service"
 )
@@ -106,7 +107,7 @@ func main() {
 
 	pingHandler := handler.NewPingHandler(cfg.DB)
 	router.GET("/ping", pingHandler.Ping)
-
+	pprof.Register(router)
 	// Запуск сервера
 	//log.Printf("Server starting on %s %s", cfg.BaseURL, cfg.ServerAddress)
 	router.Run(cfg.ServerAddress)

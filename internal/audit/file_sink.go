@@ -3,7 +3,6 @@ package audit
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"os"
 	"sync"
 )
@@ -23,7 +22,7 @@ func NewFileSink(path string) (*FileSink, error) {
 }
 
 func (s *FileSink) Consume(ctx context.Context, e Event) error {
-	b, err := json.Marshal(e)
+	b, err := jsonMarshal(e)
 	if err != nil {
 		return err
 	}

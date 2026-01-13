@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+var jsonMarshal = json.Marshal
+
 type HTTPSink struct {
 	url    string
 	client *http.Client
@@ -23,7 +25,7 @@ func NewHTTPSink(url string) *HTTPSink {
 }
 
 func (s *HTTPSink) Consume(ctx context.Context, e Event) error {
-	b, err := json.Marshal(e)
+	b, err := jsonMarshal(e)
 	if err != nil {
 		return err
 	}

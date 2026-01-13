@@ -42,3 +42,16 @@ git fetch template && git checkout template/v2 .github
 - **Clean Architecture**
 - **Hexagonal Architecture**
 - **Layered Architecture**
+
+## Memory profiling (pprof)
+
+Основной профиль профилирования:
+- `profiles/base.pprof` collected from `/debug/pprof/allocs`
+
+Профиль после оптимизации (перевили gzip на sync.Pull):
+- `profiles/result.pprof`
+
+Разница:
+
+```bash
+go tool pprof -top -diff_base=profiles/base.pprof profiles/result.pprof
