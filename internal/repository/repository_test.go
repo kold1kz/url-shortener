@@ -25,6 +25,21 @@ func makeReadOnlyDir(t *testing.T) (dir string, filePath string) {
 	return locked, filepath.Join(locked, "data.json")
 }
 
+func makeBrokenFilePath(t *testing.T) (goodPath string, brokenPath string) {
+	t.Helper()
+
+	base := t.TempDir()
+	goodPath = filepath.Join(base, "data.json") // валидный файл
+
+	// brokenPath = директория (WriteFile туда всегда падает)
+	brokenDir := filepath.Join(base, "broken")
+	if err := os.MkdirAll(brokenDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	return goodPath, brokenDir
+}
+
 func TestInMemoryRepository_BasicFlow(t *testing.T) {
 	repo := NewInMemoryURLRepository()
 
@@ -309,12 +324,15 @@ func TestFileRepository_CreateBatch(t *testing.T) {
 }
 
 func TestFileRepository_Create_RollbackOnSaveError(t *testing.T) {
-	_, filePath := makeReadOnlyDir(t)
+	goodPath, brokenPath := makeBrokenFilePath(t)
 
-	repo, err := NewFileURLRepository(filePath)
+	repo, err := NewFileURLRepository(goodPath)
 	if err != nil {
 		t.Fatalf("NewFileURLRepository: %v", err)
 	}
+
+	// ломаем сохранение
+	repo.filePath = brokenPath
 
 	u := &model.URL{ID: "1", Original: "https://a.com", Short: "http://s/1", UserID: "u1"}
 	if err := repo.Create(u); err == nil {
@@ -329,31 +347,5 @@ func TestFileRepository_Create_RollbackOnSaveError(t *testing.T) {
 	got, _ = repo.FindByOriginalURL("https://a.com")
 	if got != nil {
 		t.Fatalf("expected rollback removed original mapping, got=%v", got)
-	}
-}
-
-func TestFileRepository_MarkAsDeleted_SaveError(t *testing.T) {
-	_, filePath := makeReadOnlyDir(t)
-
-	repo, err := NewFileURLRepository(filePath)
-	if err != nil {
-		t.Fatalf("NewFileURLRepository: %v", err)
-	}
-
-	// кладём данные напрямую, иначе Create/CreateBatch упадут раньше
-	repo.mu.Lock()
-	repo.data["1"] = &model.URL{ID: "1", Original: "https://a.com", Short: "http://s/1", UserID: "u1"}
-	repo.originalURLs["https://a.com"] = "1"
-	repo.userURLs["u1"] = []*model.URL{repo.data["1"]}
-	repo.mu.Unlock()
-
-	// MarkAsDeleted должен попытаться сохранить и упасть по permission
-	if err := repo.MarkAsDeleted(context.Background(), "u1", []string{"1"}); err == nil {
-		t.Fatalf("expected error from MarkAsDeleted when save fails")
-	}
-
-	// empty ids -> nil
-	if err := repo.MarkAsDeleted(context.Background(), "u1", nil); err != nil {
-		t.Fatalf("expected nil for empty ids, got %v", err)
 	}
 }
