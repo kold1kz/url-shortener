@@ -2,8 +2,6 @@ package middleware
 
 import (
 	"compress/gzip"
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 	"io"
 	"log"
 	"net/http"
@@ -11,6 +9,9 @@ import (
 	"sync"
 	"time"
 	"url-shortener/internal/auth"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 var gzipWriterPool = sync.Pool{

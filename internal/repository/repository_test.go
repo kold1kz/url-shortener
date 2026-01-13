@@ -321,6 +321,7 @@ func TestFileRepository_CreateBatch(t *testing.T) {
 	if err := json.Unmarshal(raw, &arr); err != nil {
 		t.Fatalf("expected saved JSON array, got err=%v, data=%s", err, string(raw))
 	}
+
 }
 
 func TestFileRepository_Create_RollbackOnSaveError(t *testing.T) {

@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"errors"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +10,8 @@ import (
 	"url-shortener/internal/auth"
 	"url-shortener/internal/model"
 	"url-shortener/internal/service"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Handlers struct {

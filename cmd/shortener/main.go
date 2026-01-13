@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/gin-gonic/gin"
 	"log"
 	"url-shortener/internal/audit"
 	"url-shortener/internal/config"
@@ -10,6 +9,8 @@ import (
 	"url-shortener/internal/pprof"
 	"url-shortener/internal/repository"
 	"url-shortener/internal/service"
+
+	"github.com/gin-gonic/gin"
 )
 
 func loadConfig() *config.Config {
