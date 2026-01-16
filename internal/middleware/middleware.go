@@ -22,6 +22,13 @@ var gzipWriterPool = sync.Pool{
 	},
 }
 
+// HTTPLoggerMiddleware логирует информацию о запросе и ответе.
+//
+// Логирование выполняется после обработки запроса (после c.Next()):
+//   - url, method, duration,
+//   - status и size ответа.
+//
+// Middleware предполагает, что writer реализует gin.ResponseWriter.
 func HTTPLoggerMiddleware(logger *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Начало запроса - засекаем время
@@ -48,6 +55,9 @@ func HTTPLoggerMiddleware(logger *zap.SugaredLogger) gin.HandlerFunc {
 	}
 }
 
+// InitLogger создаёт production-логгер zap и возвращает SugaredLogger.
+//
+// При ошибке инициализации возвращает noop-логгер, чтобы сервис мог продолжить работу.
 func InitLogger() *zap.SugaredLogger {
 	logger, err := zap.NewProduction()
 	if err != nil {
@@ -121,6 +131,15 @@ func (c *compressReader) Close() error {
 	return c.zr.Close()
 }
 
+// GzipMiddleware включает gzip-сжатие HTTP-ответов и поддерживает gzip-тела запросов.
+//
+// Поведение:
+//   - если клиент прислал Accept-Encoding: gzip, ответ будет сжат и выставится
+//     Content-Encoding: gzip и Vary: Accept-Encoding;
+//   - если клиент прислал Content-Encoding: gzip, тело запроса будет распаковано
+//     перед передачей в хендлер.
+//
+// Для снижения аллокаций используются переиспользуемые gzip.Writer из sync.Pool.
 func GzipMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		acceptEncoding := c.GetHeader("Accept-Encoding")
@@ -158,6 +177,12 @@ func GzipMiddleware() gin.HandlerFunc {
 //		strings.Contains(contentType, "text/plain")
 //}
 
+// UserAuth обеспечивает идентификацию пользователя через cookie.
+//
+// Если cookie отсутствует/пуста — middleware создаёт новый userID и устанавливает cookie.
+// Если cookie есть — валидирует токен; при невалидном токене возвращает 401.
+//
+// Идентификатор пользователя сохраняется в контекст gin под ключом auth.ContextUserIDKey.
 func UserAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rawCookie, err := c.Cookie(auth.CookieName())

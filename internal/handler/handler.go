@@ -14,15 +14,35 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Handlers объединяет HTTP-хендлеры сервиса сокращения URL.
+//
+// Экземпляр содержит ссылку на сервисный слой и (опционально) publisher аудита.
+// Если audit publisher равен nil, события аудита не публикуются.
 type Handlers struct {
 	service service.URLService
 	audit   *audit.Publisher
 }
 
+// NewHandler создаёт набор HTTP-хендлеров.
+//
+// service — обязательная зависимость (бизнес-логика).
+// auditPub — необязательная зависимость; если nil, аудит отключён.
 func NewHandler(service service.URLService, auditPub *audit.Publisher) *Handlers {
 	return &Handlers{service: service, audit: auditPub}
 }
 
+// ShortenURL обрабатывает сокращение URL в формате plain text.
+//
+// Endpoint: POST /
+// Content-Type: text/plain
+//
+// Request body: исходный URL строкой.
+// Response: 201 Created, тело — короткий URL (text/plain).
+//
+// Возможные ответы:
+//   - 400 Bad Request — неверный Content-Type или пустой/битый body
+//   - 409 Conflict — URL уже был сохранён ранее (возвращается short URL)
+//   - 500 Internal Server Error — внутренняя ошибка
 func (h *Handlers) ShortenURL(c *gin.Context) {
 
 	if !strings.Contains(c.ContentType(), "text/plain") {
@@ -69,6 +89,15 @@ func (h *Handlers) ShortenURL(c *gin.Context) {
 	}
 }
 
+// GetOriginalURL возвращает исходный URL по короткому идентификатору.
+//
+// Endpoint: GET /:id
+//
+// Поведение:
+//   - 307 Temporary Redirect + заголовок Location на original URL
+//   - 404 Not Found — если id не найден
+//   - 410 Gone — если URL помечен как удалённый
+//   - 500 Internal Server Error — внутренняя ошибка
 func (h *Handlers) GetOriginalURL(c *gin.Context) {
 
 	id := c.Param("id")
@@ -109,6 +138,18 @@ func (h *Handlers) GetOriginalURL(c *gin.Context) {
 	}
 }
 
+// ShortenJSONUrl сокращает URL в JSON-формате.
+//
+// Endpoint: POST /api/shorten
+// Content-Type: application/json
+//
+// Request: model.ShortenRequest
+// Response: 201 Created, model.ShortenResponse (JSON).
+//
+// Возможные ответы:
+//   - 400 Bad Request — неверный Content-Type или некорректный JSON
+//   - 409 Conflict — URL уже был сохранён ранее (возвращается short URL)
+//   - 500 Internal Server Error — внутренняя ошибка
 func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 	if !strings.Contains(c.ContentType(), "application/json") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
@@ -126,7 +167,7 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
 		return
 	}
-	// перенести в service
+	// TODO: перенести в service
 	if req.URL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
 		return
@@ -174,6 +215,17 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 	//c.JSON(http.StatusCreated, resp)
 }
 
+// ShortenURLBatch сокращает набор URL одной пачкой.
+//
+// Endpoint: POST /api/shorten/batch
+// Content-Type: application/json
+//
+// Request: []model.BatchRequest
+// Response: 201 Created, []model.BatchResponse (JSON).
+//
+// Возможные ответы:
+//   - 400 Bad Request — неверный Content-Type, пустой batch или некорректный JSON
+//   - 500 Internal Server Error — внутренняя ошибка
 func (h *Handlers) ShortenURLBatch(c *gin.Context) {
 	if !strings.Contains(c.ContentType(), "application/json") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})
@@ -222,6 +274,14 @@ func (h *Handlers) ShortenURLBatch(c *gin.Context) {
 	}
 }
 
+// GetUserURLs возвращает список URL текущего пользователя.
+//
+// Endpoint: GET /api/user/urls
+//
+// Ответы:
+//   - 200 OK — []model.UserURLResponse (JSON)
+//   - 204 No Content — если у пользователя нет URL (или все удалены)
+//   - 500 Internal Server Error — внутренняя ошибка
 func (h *Handlers) GetUserURLs(c *gin.Context) {
 	userID := c.GetString(auth.ContextUserIDKey)
 
@@ -250,6 +310,17 @@ func (h *Handlers) GetUserURLs(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// DeleteUserURLs асинхронно помечает набор URL пользователя как удалённые.
+//
+// Endpoint: DELETE /api/user/urls
+// Content-Type: application/json
+//
+// Request body: []string (список идентификаторов коротких URL).
+//
+// Ответы:
+//   - 202 Accepted — запрос принят в обработку
+//   - 400 Bad Request — неверный Content-Type, некорректный JSON или пустой список
+//   - 500 Internal Server Error — внутренняя ошибка
 func (h *Handlers) DeleteUserURLs(c *gin.Context) {
 	if !strings.Contains(c.ContentType(), "application/json") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content type"})

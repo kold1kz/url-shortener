@@ -11,6 +11,10 @@ import (
 	"url-shortener/internal/model"
 )
 
+// URLRepository описывает операции хранения и чтения сокращённых URL.
+//
+// Все методы должны быть потокобезопасными.
+// FindByID/FindByOriginalURL возвращают (nil, nil), если запись не найдена.
 type URLRepository interface {
 	Create(url *model.URL) error
 	FindByID(id string) (*model.URL, error)
@@ -20,6 +24,10 @@ type URLRepository interface {
 	MarkAsDeleted(ctx context.Context, userID string, ids []string) error
 }
 
+// InMemoryURLRepository — in-memory реализация URLRepository.
+//
+// Данные хранятся в мапах и защищены RWMutex.
+// Репозиторий подходит для локальной разработки и тестов.
 type InMemoryURLRepository struct {
 	mu           sync.RWMutex
 	data         map[string]*model.URL
@@ -27,6 +35,7 @@ type InMemoryURLRepository struct {
 	userURLs     map[string][]*model.URL
 }
 
+// NewInMemoryURLRepository создаёт новый репозиторий, хранящий данные в памяти.
 func NewInMemoryURLRepository() *InMemoryURLRepository {
 	return &InMemoryURLRepository{
 		data:         make(map[string]*model.URL),
@@ -123,6 +132,10 @@ func (r *InMemoryURLRepository) MarkAsDeleted(ctx context.Context, userID string
 	return nil
 }
 
+// FileURLRepository — файловая реализация URLRepository.
+//
+// Хранит данные в JSON-файле (массив объектов model.URL).
+// При изменениях сохраняет состояние в файл. Операции защищены RWMutex.
 type FileURLRepository struct {
 	mu           sync.RWMutex
 	data         map[string]*model.URL
@@ -131,6 +144,9 @@ type FileURLRepository struct {
 	userURLs     map[string][]*model.URL
 }
 
+// NewFileURLRepository создаёт файловый репозиторий и загружает данные из файла.
+//
+// Если файл отсутствует или пуст, репозиторий создаётся с пустым состоянием.
 func NewFileURLRepository(filePath string) (*FileURLRepository, error) {
 	repo := &FileURLRepository{
 		data:         make(map[string]*model.URL),
@@ -266,6 +282,7 @@ func (r *FileURLRepository) FindByUserID(userID string) ([]*model.URL, error) {
 	return res, nil
 }
 
+// Close сохраняет текущее состояние репозитория в файл.
 func (r *FileURLRepository) Close() error {
 	return r.saveToFile()
 }

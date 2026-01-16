@@ -13,14 +13,21 @@ import (
 	"github.com/lib/pq"
 )
 
+// PostgresURLRepository — реализация URLRepository поверх PostgreSQL.
 type PostgresURLRepository struct {
 	db *sql.DB
 }
 
+// URLConflictError возвращается при попытке создать URL с original_url,
+// который уже существует в хранилище (PostgreSQL unique violation).
+//
+// ExistingURL содержит найденную запись, которую можно вернуть клиенту.
 type URLConflictError struct {
 	ExistingURL *model.URL
 }
 
+// NewPostgresURLRepository создаёт репозиторий PostgreSQL и проверяет,
+// что таблица urls существует (миграции применены).
 func NewPostgresURLRepository(db *sql.DB) (*PostgresURLRepository, error) {
 	if err := checkTableExists(db); err != nil {
 		return nil, fmt.Errorf("table check failed: %w", err)
@@ -71,10 +78,12 @@ func (r *PostgresURLRepository) Create(url *model.URL) error {
 	return nil
 }
 
+// Error реализует интерфейс error.
 func (e *URLConflictError) Error() string {
 	return "URL already exists"
 }
 
+// IsURLConflictError проверяет, что ошибка имеет тип URLConflictError.
 func IsURLConflictError(err error) bool {
 	_, ok := err.(*URLConflictError)
 	return ok
@@ -130,10 +139,12 @@ func (r *PostgresURLRepository) FindByUserID(userID string) ([]*model.URL, error
 	return res, rows.Err()
 }
 
+// Close закрывает соединение с БД.
 func (r *PostgresURLRepository) Close() error {
 	return r.db.Close()
 }
 
+// Ping проверяет доступность БД.
 func (r *PostgresURLRepository) Ping() error {
 	return r.db.Ping()
 }

@@ -15,16 +15,44 @@ import (
 )
 
 var (
+	// ErrURLAlreadyExists возвращается, если исходный URL уже сохранён в системе.
+	// В этом случае сервис может вернуть существующую короткую ссылку.
 	ErrURLAlreadyExists = errors.New("url already exists")
-	ErrURLDeleted       = errors.New("url deleted")
+
+	// ErrURLDeleted возвращается при попытке получить исходный URL,
+	// который помечен как удалённый.
+	ErrURLDeleted = errors.New("url deleted")
 )
 
+// URLService описывает бизнес-операции сервиса сокращения URL.
+//
+// Реализация должна быть потокобезопасной.
 type URLService interface {
+	// ShortenURL создаёт сокращённый URL для original и связывает его с userID.
+	//
+	// Если URL уже существует, возвращает существующую запись и ErrURLAlreadyExists.
 	ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error)
+
+	// GetOriginalURL возвращает исходный URL по короткому идентификатору.
+	//
+	// Возвращает ("", nil), если запись не найдена.
+	// Возвращает ErrURLDeleted, если URL помечен как удалённый.
 	GetOriginalURL(ctx context.Context, id string) (string, error)
+
+	// ShortenURLBatch сокращает список URL одним запросом.
+	//
+	// Корреляция запроса и ответа выполняется через CorrelationID.
 	ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error)
+
+	// FindByUserID возвращает список URL, созданных пользователем.
 	FindByUserID(ctx context.Context, userID string) ([]*model.URL, error)
+
+	// DeleteUserURLs принимает список идентификаторов URL для удаления.
+	//
+	// Реализация выполняет удаление асинхронно (batched mark-as-deleted).
 	DeleteUserURLs(ctx context.Context, userID string, ids []string) error
+
+	// Close завершает фоновые процессы сервиса и освобождает ресурсы.
 	Close() error
 }
 
@@ -75,6 +103,11 @@ func fnv32(s string) uint32 {
 	return h.Sum32()
 }
 
+// NewURLService создаёт реализацию URLService.
+//
+// baseURL используется для формирования коротких ссылок (Short).
+// Для обработки запросов удаления запускается фоновый worker, который
+// агрегирует удаления и периодически вызывает repository.MarkAsDeleted.
 func NewURLService(repo repository.URLRepository, baseURL string) URLService {
 	const workers = 4
 
