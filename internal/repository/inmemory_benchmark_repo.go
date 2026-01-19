@@ -9,13 +9,12 @@ func BenchmarkInMemoryCreate(b *testing.B) {
 	repo := NewInMemoryURLRepository()
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		u := &model.URL{
-			ID:       itoa(i),
-			Original: "https://example.com/" + itoa(i),
-			Short:    "http://localhost/" + itoa(i),
+			ID:       "1",
+			Original: "https://example.com/1",
+			Short:    "http://localhost/1",
 			UserID:   "u1",
 		}
 		_ = repo.Create(u)

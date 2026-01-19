@@ -3,18 +3,21 @@ package audit
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"sync"
 )
 
+// FileSink пишет аудит событие в файл.
 type FileSink struct {
 	mu sync.Mutex
 	f  *os.File
 	w  *bufio.Writer
 }
 
+// NewFileSink oткрывет\создает файл по пути и доваляет аудит событие.
 func NewFileSink(path string) (*FileSink, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -22,7 +25,7 @@ func NewFileSink(path string) (*FileSink, error) {
 }
 
 func (s *FileSink) Consume(ctx context.Context, e Event) error {
-	b, err := jsonMarshal(e)
+	b, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}

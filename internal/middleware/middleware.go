@@ -171,12 +171,6 @@ func GzipMiddleware() gin.HandlerFunc {
 	}
 }
 
-//func shouldCompress(contentType string) bool {
-//	return strings.Contains(contentType, "application/json") ||
-//		strings.Contains(contentType, "text/html") ||
-//		strings.Contains(contentType, "text/plain")
-//}
-
 // UserAuth обеспечивает идентификацию пользователя через cookie.
 //
 // Если cookie отсутствует/пуста — middleware создаёт новый userID и устанавливает cookie.

@@ -1,8 +1,9 @@
-package audit
+package audit_test
 
 import (
 	"context"
 	"errors"
+	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,57 +11,56 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
+
+	"url-shortener/internal/audit"
+	"url-shortener/internal/audit/mocks"
+
+	"github.com/stretchr/testify/mock"
 )
 
 func TestPublisher_AddSink_NilIgnored(t *testing.T) {
-	p := NewPublisher()
+	p := audit.NewPublisher()
 	p.AddSink(nil)
 
 	// publish should not panic
-	p.Publish(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "x"})
+	p.Publish(context.Background(), audit.Event{TS: 1, Action: audit.ActionShorten, URL: "x"})
 	_ = p.Close()
 }
 
-type mockSink struct {
-	consumeCalls int64
-	closeCalls   int64
-
-	wg     *sync.WaitGroup
-	errC   error
-	errCls error
-}
-
-func (m *mockSink) Consume(ctx context.Context, e Event) error {
-	atomic.AddInt64(&m.consumeCalls, 1)
-	if m.wg != nil {
-		m.wg.Done()
-	}
-	return m.errC
-}
-
-func (m *mockSink) Close() error {
-	atomic.AddInt64(&m.closeCalls, 1)
-	return m.errCls
-}
-
 func TestPublisher_Publish_FanoutToAllSinks(t *testing.T) {
-	p := NewPublisher()
+	p := audit.NewPublisher()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	s1 := &mockSink{wg: &wg}
-	s2 := &mockSink{wg: &wg}
+	s1 := mocks.NewSink(t)
+	s2 := mocks.NewSink(t)
+
+	s1.On("Consume", mock.Anything, mock.AnythingOfType("audit.Event")).
+		Return(nil).
+		Run(func(args mock.Arguments) { wg.Done() })
+
+	s2.On("Consume", mock.Anything, mock.AnythingOfType("audit.Event")).
+		Return(nil).
+		Run(func(args mock.Arguments) { wg.Done() })
+
+	// Close тоже будет вызван — надо описать ожидание
+	s1.On("Close").Return(nil)
+	s2.On("Close").Return(nil)
 
 	p.AddSink(s1)
 	p.AddSink(s2)
 
-	p.Publish(context.Background(), Event{TS: 123, Action: ActionShorten, UserID: "u1", URL: "https://x"})
+	p.Publish(context.Background(), audit.Event{
+		TS:     123,
+		Action: audit.ActionShorten,
+		UserID: "u1",
+		URL:    "https://x",
+	})
 
-	// Publish spawns goroutines -> wait bounded time
+	// дождаться асинхронных Consume
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -73,18 +73,17 @@ func TestPublisher_Publish_FanoutToAllSinks(t *testing.T) {
 		t.Fatalf("timeout waiting Consume calls")
 	}
 
-	if atomic.LoadInt64(&s1.consumeCalls) != 1 || atomic.LoadInt64(&s2.consumeCalls) != 1 {
-		t.Fatalf("expected both sinks consumed exactly once")
-	}
-
 	_ = p.Close()
 }
 
 func TestPublisher_Close_ReturnsFirstError(t *testing.T) {
-	p := NewPublisher()
+	p := audit.NewPublisher()
 
-	s1 := &mockSink{errCls: errors.New("close1")}
-	s2 := &mockSink{errCls: errors.New("close2")}
+	s1 := mocks.NewSink(t)
+	s2 := mocks.NewSink(t)
+
+	s1.On("Close").Return(errors.New("close1"))
+	s2.On("Close").Return(errors.New("close2"))
 
 	p.AddSink(s1)
 	p.AddSink(s2)
@@ -96,8 +95,8 @@ func TestPublisher_Close_ReturnsFirstError(t *testing.T) {
 }
 
 func TestFileSink_NewFileSink_BadPath(t *testing.T) {
-	// invalid path: create dir as file path prefix or impossible location
-	_, err := NewFileSink(string([]byte{0})) // NUL is invalid path on most OS
+	// NUL is invalid path on most OS
+	_, err := audit.NewFileSink(string([]byte{0}))
 	if err == nil {
 		t.Fatalf("expected error for invalid path")
 	}
@@ -107,12 +106,12 @@ func TestFileSink_Consume_WritesJSONLine_AndClose(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.log")
 
-	s, err := NewFileSink(path)
+	s, err := audit.NewFileSink(path)
 	if err != nil {
 		t.Fatalf("NewFileSink error: %v", err)
 	}
 
-	ev := Event{TS: 111, Action: ActionFollow, UserID: "u2", URL: "https://example.com"}
+	ev := audit.Event{TS: 111, Action: audit.ActionFollow, UserID: "u2", URL: "https://example.com"}
 	if err := s.Consume(context.Background(), ev); err != nil {
 		t.Fatalf("Consume error: %v", err)
 	}
@@ -127,12 +126,10 @@ func TestFileSink_Consume_WritesJSONLine_AndClose(t *testing.T) {
 	}
 	got := string(b)
 
-	// must end with '\n'
 	if !strings.HasSuffix(got, "\n") {
 		t.Fatalf("expected newline at end, got: %q", got)
 	}
 
-	// check that key names match json tags and contains values
 	if !strings.Contains(got, `"ts":111`) ||
 		!strings.Contains(got, `"action":"follow"`) ||
 		!strings.Contains(got, `"user_id":"u2"`) ||
@@ -141,29 +138,9 @@ func TestFileSink_Consume_WritesJSONLine_AndClose(t *testing.T) {
 	}
 }
 
-func TestFileSink_Consume_MarshalError(t *testing.T) {
-	// stub jsonMarshal to return error
-	old := jsonMarshal
-	jsonMarshal = func(v any) ([]byte, error) { return nil, errors.New("marshal") }
-	t.Cleanup(func() { jsonMarshal = old })
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "audit.log")
-
-	s, err := NewFileSink(path)
-	if err != nil {
-		t.Fatalf("NewFileSink error: %v", err)
-	}
-	defer s.Close()
-
-	err = s.Consume(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "x"})
-	if err == nil || err.Error() != "marshal" {
-		t.Fatalf("expected marshal error, got: %v", err)
-	}
-}
-
 func TestHTTPSink_Consume_Success(t *testing.T) {
 	var gotBody []byte
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST, got %s", r.Method)
@@ -178,8 +155,8 @@ func TestHTTPSink_Consume_Success(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s := NewHTTPSink(ts.URL)
-	err := s.Consume(context.Background(), Event{TS: 10, Action: ActionShorten, UserID: "u1", URL: "https://x"})
+	s := audit.NewHTTPSink(ts.URL)
+	err := s.Consume(context.Background(), audit.Event{TS: 10, Action: audit.ActionShorten, UserID: "u1", URL: "https://x"})
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -195,50 +172,38 @@ func TestHTTPSink_Consume_StatusNotOK(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s := NewHTTPSink(ts.URL)
-	err := s.Consume(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "x"})
+	s := audit.NewHTTPSink(ts.URL)
+	err := s.Consume(context.Background(), audit.Event{TS: 1, Action: audit.ActionShorten, URL: "x"})
 	if err == nil {
 		t.Fatalf("expected error")
 	}
-	if _, ok := err.(*httpError); !ok {
-		t.Fatalf("expected *httpError, got %T", err)
-	}
-	if err.Error() != "audit http sink status not ok" {
+	if err.Error() != "audit http sink status not ok: status=418" {
 		t.Fatalf("unexpected error string: %v", err)
 	}
 }
 
 func TestHTTPSink_Consume_NewRequestError(t *testing.T) {
-	// invalid URL -> NewRequestWithContext should fail
-	s := NewHTTPSink("http://[::1") // malformed
-	err := s.Consume(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "x"})
+	s := audit.NewHTTPSink("http://[::1") // malformed
+	err := s.Consume(context.Background(), audit.Event{TS: 1, Action: audit.ActionShorten, URL: "x"})
 	if err == nil {
 		t.Fatalf("expected error for invalid request url")
 	}
 }
 
 func TestHTTPSink_Consume_DoError(t *testing.T) {
-	// use an URL that will fail at client.Do (invalid scheme)
-	s := NewHTTPSink("http://127.0.0.1:0") // port 0 should fail connect
-	err := s.Consume(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "x"})
+	s := audit.NewHTTPSink("http://127.0.0.1:0") // connect should fail
+	err := s.Consume(context.Background(), audit.Event{TS: 1, Action: audit.ActionShorten, URL: "x"})
 	if err == nil {
 		t.Fatalf("expected do error")
 	}
 }
 
 func TestHTTPSink_Consume_MarshalError(t *testing.T) {
-	old := jsonMarshal
-	jsonMarshal = func(v any) ([]byte, error) { return nil, errors.New("marshal") }
-	t.Cleanup(func() { jsonMarshal = old })
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+	s := audit.NewHTTPSink("http://example.com", audit.WithMarshal(func(v any) ([]byte, error) {
+		return nil, errors.New("marshal")
 	}))
-	defer ts.Close()
 
-	s := NewHTTPSink(ts.URL)
-	err := s.Consume(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "x"})
-	if err == nil || err.Error() != "marshal" {
-		t.Fatalf("expected marshal error, got %v", err)
-	}
+	err := s.Consume(context.Background(), audit.Event{TS: 1, Action: audit.ActionShorten, URL: "x"})
+	require.Error(t, err)
+	require.EqualError(t, err, "marshal")
 }

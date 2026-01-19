@@ -24,23 +24,23 @@ func loadConfig() *config.Config {
 }
 
 func buildRepo(cfg *config.Config) repository.URLRepository {
-
 	if cfg.DB != nil {
 		postgresRepo, err := repository.NewPostgresURLRepository(cfg.DB.GetDB())
-		if err == nil {
-			log.Printf("Using PostgreSQL repository")
-			return postgresRepo
+		if err != nil {
+			log.Fatalf("Failed to init PostgreSQL repository: %v", err)
 		}
-		log.Printf("Failed to init PostgreSQL repo: %v. Fallback...", err)
+		log.Printf("Using PostgreSQL repository")
+		return postgresRepo
 	}
 
 	if cfg.FileStoragePath != "" {
 		fileRepo, err := repository.NewFileURLRepository(cfg.FileStoragePath)
-		if err == nil {
-			log.Printf("Using file repository: %s", cfg.FileStoragePath)
-			return fileRepo
+		if err != nil {
+			log.Fatalf("Failed to init file repository (%s): %v",
+				cfg.FileStoragePath, err)
 		}
-		log.Printf("Failed to init file repo: %v. Fallback...", err)
+		log.Printf("Using file repository: %s", cfg.FileStoragePath)
+		return fileRepo
 	}
 
 	log.Printf("Using in-memory repository")
@@ -110,6 +110,6 @@ func main() {
 	router.GET("/ping", pingHandler.Ping)
 	pprof.Register(router)
 	// Запуск сервера
-	//log.Printf("Server starting on %s %s", cfg.BaseURL, cfg.ServerAddress)
+	log.Printf("Server starting on %s", cfg.BaseURL)
 	router.Run(cfg.ServerAddress)
 }

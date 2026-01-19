@@ -38,7 +38,10 @@ func (p *Publisher) Publish(ctx context.Context, e Event) {
 
 func (p *Publisher) Close() error {
 	p.mu.RLock()
-	sinks := append([]Sink(nil), p.sinks...)
+
+	var sinks []Sink
+	sinks = append(sinks, p.sinks...)
+
 	p.mu.RUnlock()
 
 	var firstErr error
