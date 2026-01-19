@@ -3,7 +3,6 @@ package audit_test
 import (
 	"context"
 	"errors"
-	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"url-shortener/internal/audit"
 	"url-shortener/internal/audit/mocks"
