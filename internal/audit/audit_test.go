@@ -206,5 +206,5 @@ func TestHTTPSink_Consume_MarshalError(t *testing.T) {
 
 	err := s.Consume(context.Background(), audit.Event{TS: 1, Action: audit.ActionShorten, URL: "x"})
 	require.Error(t, err)
-	require.EqualError(t, err, "marshal")
+	require.EqualError(t, err, "audit http sink marshal event: marshal")
 }

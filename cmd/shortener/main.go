@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"url-shortener/internal/audit"
 	"url-shortener/internal/config"
@@ -13,38 +14,37 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func loadConfig() *config.Config {
+func loadConfig() (*config.Config, error) {
 	cfg := config.Init()
 
 	// Проверяем корректность конфигурации
 	if err := cfg.Validate(); err != nil {
-		log.Fatalf("Configuration error: %v", err)
+		return nil, fmt.Errorf("validate config: %w", err)
 	}
-	return cfg
+	return cfg, nil
 }
 
-func buildRepo(cfg *config.Config) repository.URLRepository {
+func buildRepo(cfg *config.Config) (repository.URLRepository, error) {
 	if cfg.DB != nil {
 		postgresRepo, err := repository.NewPostgresURLRepository(cfg.DB.GetDB())
 		if err != nil {
-			log.Fatalf("Failed to init PostgreSQL repository: %v", err)
+			return nil, fmt.Errorf("failed to init postgres repository: %w", err)
 		}
 		log.Printf("Using PostgreSQL repository")
-		return postgresRepo
+		return postgresRepo, nil
 	}
 
 	if cfg.FileStoragePath != "" {
 		fileRepo, err := repository.NewFileURLRepository(cfg.FileStoragePath)
 		if err != nil {
-			log.Fatalf("Failed to init file repository (%s): %v",
-				cfg.FileStoragePath, err)
+			return nil, fmt.Errorf("init file repository (%s): %w", cfg.FileStoragePath, err)
 		}
 		log.Printf("Using file repository: %s", cfg.FileStoragePath)
-		return fileRepo
+		return fileRepo, nil
 	}
 
 	log.Printf("Using in-memory repository")
-	return repository.NewInMemoryURLRepository()
+	return repository.NewInMemoryURLRepository(), nil
 }
 
 func buildAuditPublisher(cfg *config.Config) *audit.Publisher {
@@ -72,13 +72,19 @@ func buildAuditPublisher(cfg *config.Config) *audit.Publisher {
 }
 
 func main() {
-	cfg := loadConfig()
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
 	defer cfg.Close()
 
 	logger := middleware.InitLogger()
 	defer logger.Sync()
 
-	repo := buildRepo(cfg)
+	repo, err := buildRepo(cfg)
+	if err != nil {
+		log.Fatalf("startup error: %v", err)
+	}
 	svc := service.NewURLService(repo, cfg.BaseURL)
 	defer svc.Close()
 
@@ -111,5 +117,7 @@ func main() {
 	pprof.Register(router)
 	// Запуск сервера
 	log.Printf("Server starting on %s", cfg.BaseURL)
-	router.Run(cfg.ServerAddress)
+	if err := router.Run(cfg.ServerAddress); err != nil {
+		log.Fatalf("server run error: %v", err)
+	}
 }

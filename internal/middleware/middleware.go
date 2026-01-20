@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"compress/gzip"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -100,7 +101,10 @@ func (c *compressWriter) Close() error {
 	gzipWriterPool.Put(c.zw)
 	c.zw = nil
 
-	return err
+	if err != nil {
+		return fmt.Errorf("gzip middleware: close gzip writer: %w", err)
+	}
+	return nil
 }
 
 type compressReader struct {
@@ -111,7 +115,7 @@ type compressReader struct {
 func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gzip middleware: create reader: %w", err)
 	}
 
 	return &compressReader{
@@ -126,9 +130,12 @@ func (c *compressReader) Read(p []byte) (n int, err error) {
 
 func (c *compressReader) Close() error {
 	if err := c.ReadCloser.Close(); err != nil {
-		return err
+		return fmt.Errorf("gzip middleware: close request body: %w", err)
 	}
-	return c.zr.Close()
+	if err := c.zr.Close(); err != nil {
+		return fmt.Errorf("gzip middleware: close gzip reader: %w", err)
+	}
+	return nil
 }
 
 // GzipMiddleware включает gzip-сжатие HTTP-ответов и поддерживает gzip-тела запросов.

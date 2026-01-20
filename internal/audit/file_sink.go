@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 )
@@ -19,7 +20,7 @@ type FileSink struct {
 func NewFileSink(path string) (*FileSink, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("audit file sink: open file %q: %w", path, err)
 	}
 	return &FileSink{f: f, w: bufio.NewWriterSize(f, 64*1024)}, nil
 }
@@ -27,16 +28,19 @@ func NewFileSink(path string) (*FileSink, error) {
 func (s *FileSink) Consume(ctx context.Context, e Event) error {
 	b, err := json.Marshal(e)
 	if err != nil {
-		return err
+		return fmt.Errorf("audit file sink: marshal event: %w", err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if _, err := s.w.Write(append(b, '\n')); err != nil {
-		return err
+		return fmt.Errorf("audit file sink: write: %w", err)
 	}
-	return s.w.Flush()
+	if err := s.w.Flush(); err != nil {
+		return fmt.Errorf("audit file sink: flush: %w", err)
+	}
+	return nil
 }
 
 func (s *FileSink) Close() error {

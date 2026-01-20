@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	retryablehttp "github.com/hashicorp/go-retryablehttp"
 )
 
 // HTTPSink отправляет audit-события HTTP POST запросом на указанный endpoint.
 type HTTPSink struct {
 	url     string
-	client  *http.Client
+	client  *retryablehttp.Client
 	marshal func(v any) ([]byte, error)
 }
 
@@ -23,7 +25,7 @@ type HTTPSinkOption func(*HTTPSink)
 func WithHTTPClient(c *http.Client) HTTPSinkOption {
 	return func(s *HTTPSink) {
 		if c != nil {
-			s.client = c
+			s.client.HTTPClient = c
 		}
 	}
 }
@@ -39,11 +41,16 @@ func WithMarshal(m func(v any) ([]byte, error)) HTTPSinkOption {
 
 // NewHTTPSink создаёт HTTP sink для аудита.
 func NewHTTPSink(url string, opts ...HTTPSinkOption) *HTTPSink {
+	client := retryablehttp.NewClient()
+	client.Logger = nil
+	client.RetryMax = 3
+	client.RetryWaitMin = 100 * time.Millisecond
+	client.RetryWaitMax = 1 * time.Second
+	client.HTTPClient.Timeout = 3 * time.Second
+
 	s := &HTTPSink{
-		url: url,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		url:     url,
+		client:  client,
 		marshal: json.Marshal,
 	}
 	for _, opt := range opts {
@@ -56,12 +63,12 @@ func NewHTTPSink(url string, opts ...HTTPSinkOption) *HTTPSink {
 func (s *HTTPSink) Consume(ctx context.Context, e Event) error {
 	body, err := s.marshal(e)
 	if err != nil {
-		return err
+		return fmt.Errorf("audit http sink marshal event: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("audit http sink build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -69,7 +76,7 @@ func (s *HTTPSink) Consume(ctx context.Context, e Event) error {
 	if err != nil {
 		return fmt.Errorf("audit http sink request failed: %w", err)
 	}
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &httpError{StatusCode: resp.StatusCode}
@@ -79,6 +86,4 @@ func (s *HTTPSink) Consume(ctx context.Context, e Event) error {
 }
 
 // Close реализует Sink. Для HTTPSink закрывать нечего.
-func (s *HTTPSink) Close() error {
-	return nil
-}
+func (s *HTTPSink) Close() error { return nil }

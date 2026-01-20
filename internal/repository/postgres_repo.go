@@ -46,7 +46,7 @@ func checkTableExists(db *sql.DB) error {
 	`).Scan(&exists)
 
 	if err != nil {
-		return err
+		return fmt.Errorf("check urls table exists: %w", err)
 	}
 
 	if !exists {
