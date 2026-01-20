@@ -2,16 +2,34 @@ package middleware
 
 import (
 	"compress/gzip"
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"url-shortener/internal/auth"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		// BestSpeed почти всегда достаточно и дешевле по CPU/памяти
+		w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
+		return w
+	},
+}
+
+// HTTPLoggerMiddleware логирует информацию о запросе и ответе.
+//
+// Логирование выполняется после обработки запроса (после c.Next()):
+//   - url, method, duration,
+//   - status и size ответа.
+//
+// Middleware предполагает, что writer реализует gin.ResponseWriter.
 func HTTPLoggerMiddleware(logger *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Начало запроса - засекаем время
@@ -38,6 +56,9 @@ func HTTPLoggerMiddleware(logger *zap.SugaredLogger) gin.HandlerFunc {
 	}
 }
 
+// InitLogger создаёт production-логгер zap и возвращает SugaredLogger.
+//
+// При ошибке инициализации возвращает noop-логгер, чтобы сервис мог продолжить работу.
 func InitLogger() *zap.SugaredLogger {
 	logger, err := zap.NewProduction()
 	if err != nil {
@@ -55,13 +76,18 @@ type compressWriter struct {
 }
 
 func newCompressWriter(w gin.ResponseWriter) *compressWriter {
+	zw := gzipWriterPool.Get().(*gzip.Writer)
+	zw.Reset(w)
 	return &compressWriter{
 		ResponseWriter: w,
-		zw:             gzip.NewWriter(w),
+		zw:             zw,
 	}
 }
 
 func (c *compressWriter) Write(p []byte) (int, error) {
+	if c.Header().Get("Content-Type") == "" {
+		c.Header().Set("Content-Type", "application/octet-stream")
+	}
 	return c.zw.Write(p)
 }
 
@@ -70,7 +96,15 @@ func (c *compressWriter) WriteString(s string) (int, error) {
 }
 
 func (c *compressWriter) Close() error {
-	return c.zw.Close()
+	err := c.zw.Close()
+	c.zw.Reset(io.Discard)
+	gzipWriterPool.Put(c.zw)
+	c.zw = nil
+
+	if err != nil {
+		return fmt.Errorf("gzip middleware: close gzip writer: %w", err)
+	}
+	return nil
 }
 
 type compressReader struct {
@@ -81,7 +115,7 @@ type compressReader struct {
 func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gzip middleware: create reader: %w", err)
 	}
 
 	return &compressReader{
@@ -96,11 +130,23 @@ func (c *compressReader) Read(p []byte) (n int, err error) {
 
 func (c *compressReader) Close() error {
 	if err := c.ReadCloser.Close(); err != nil {
-		return err
+		return fmt.Errorf("gzip middleware: close request body: %w", err)
 	}
-	return c.zr.Close()
+	if err := c.zr.Close(); err != nil {
+		return fmt.Errorf("gzip middleware: close gzip reader: %w", err)
+	}
+	return nil
 }
 
+// GzipMiddleware включает gzip-сжатие HTTP-ответов и поддерживает gzip-тела запросов.
+//
+// Поведение:
+//   - если клиент прислал Accept-Encoding: gzip, ответ будет сжат и выставится
+//     Content-Encoding: gzip и Vary: Accept-Encoding;
+//   - если клиент прислал Content-Encoding: gzip, тело запроса будет распаковано
+//     перед передачей в хендлер.
+//
+// Для снижения аллокаций используются переиспользуемые gzip.Writer из sync.Pool.
 func GzipMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		acceptEncoding := c.GetHeader("Accept-Encoding")
@@ -110,13 +156,12 @@ func GzipMiddleware() gin.HandlerFunc {
 		sendsGzip := strings.Contains(contentEncoding, "gzip")
 
 		if supportsGzip {
-			contentType := c.GetHeader("Content-Type")
-			if shouldCompress(contentType) {
-				cw := newCompressWriter(c.Writer)
-				defer cw.Close()
-				c.Writer = cw
-				c.Header("Content-Encoding", "gzip")
-			}
+			cw := newCompressWriter(c.Writer)
+			defer cw.Close()
+
+			c.Writer = cw
+			c.Header("Content-Encoding", "gzip")
+			c.Header("Vary", "Accept-Encoding")
 		}
 
 		if sendsGzip {
@@ -133,12 +178,12 @@ func GzipMiddleware() gin.HandlerFunc {
 	}
 }
 
-func shouldCompress(contentType string) bool {
-	return strings.Contains(contentType, "application/json") ||
-		strings.Contains(contentType, "text/html") ||
-		strings.Contains(contentType, "text/plain")
-}
-
+// UserAuth обеспечивает идентификацию пользователя через cookie.
+//
+// Если cookie отсутствует/пуста — middleware создаёт новый userID и устанавливает cookie.
+// Если cookie есть — валидирует токен; при невалидном токене возвращает 401.
+//
+// Идентификатор пользователя сохраняется в контекст gin под ключом auth.ContextUserIDKey.
 func UserAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rawCookie, err := c.Cookie(auth.CookieName())

@@ -1,9 +1,10 @@
 package handler
 
 import (
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"url-shortener/internal/database"
+
+	"github.com/gin-gonic/gin"
 )
 
 type PingHandler struct {

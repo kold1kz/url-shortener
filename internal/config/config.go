@@ -6,8 +6,6 @@ import (
 	"log"
 	"os"
 	"url-shortener/internal/database"
-	"url-shortener/internal/repository"
-	"url-shortener/internal/service"
 )
 
 type Config struct {
@@ -15,7 +13,11 @@ type Config struct {
 	BaseURL         string
 	FileStoragePath string
 	DatabaseDSN     string
-	URLService      service.URLService
+
+	AuditFile string
+	AuditURL  string
+
+	DB *database.DB
 }
 
 func Init() *Config {
@@ -24,8 +26,9 @@ func Init() *Config {
 	flag.StringVar(&cfg.ServerAddress, "a", "localhost:8080", "HTTP server address")
 	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "Base URL for short links")
 	flag.StringVar(&cfg.FileStoragePath, "f", "./tmp/shorten_url.json", "File storage path")
-	flag.StringVar(&cfg.DatabaseDSN, "d", "postgres://username:password@localhost:5432/database_name",
-		"Database address")
+	flag.StringVar(&cfg.DatabaseDSN, "d", "postgres://root:root@localhost:5433/db", "Database DSN")
+	flag.StringVar(&cfg.AuditFile, "audit-file", "", "Audit file path")
+	flag.StringVar(&cfg.AuditURL, "audit-url", "", "Audit remote URL")
 	flag.Parse()
 
 	if envServer := os.Getenv("SERVER_ADDRESS"); envServer != "" {
@@ -43,7 +46,14 @@ func Init() *Config {
 	if envDatabaseDSN := os.Getenv("DATABASE_DSN"); envDatabaseDSN != "" {
 		cfg.DatabaseDSN = envDatabaseDSN
 	}
-	cfg.initService()
+	if envAuditURL := os.Getenv("AUDIT_URL"); envAuditURL != "" {
+		cfg.AuditURL = envAuditURL
+	}
+	if envAuditFile := os.Getenv("AUDIT_FILE"); envAuditFile != "" {
+		cfg.AuditFile = envAuditFile
+	}
+
+	cfg.initDB()
 	return cfg
 }
 
@@ -57,49 +67,24 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) initService() {
-	var repo repository.URLRepository
-
-	if c.DatabaseDSN != "" {
-		db, err := database.NewDB(c.DatabaseDSN)
-		if err != nil {
-			log.Printf("Failed to connect to PostgreSQL: %v", err)
-			log.Printf("Falling back to file storage")
-
-		} else {
-			postgresRepo, err := repository.NewPostgresURLRepository(db.GetDB())
-			if err != nil {
-				log.Printf("Failed to initialize PostgreSQL repository: %v", err)
-				log.Printf("Falling back to file storage")
-			} else {
-				repo = postgresRepo
-				log.Printf("Using PostgreSQL repository")
-			}
-		}
+func (c *Config) initDB() {
+	if c.DatabaseDSN == "" {
+		return
 	}
 
-	if repo == nil && c.FileStoragePath != "" {
-		fileRepo, err := repository.NewFileURLRepository(c.FileStoragePath)
-		if err != nil {
-			log.Printf("Failed to initialize file repository: %v", err)
-			log.Printf("Falling back to in-memory storage")
-		} else {
-			repo = fileRepo
-			log.Printf("Using file repository: %s", c.FileStoragePath)
-		}
+	db, err := database.NewDB(c.DatabaseDSN)
+	if err != nil {
+		log.Printf("Failed to connect to PostgreSQL: %v", err)
+		return
 	}
 
-	if repo == nil {
-		repo = repository.NewInMemoryURLRepository()
-		log.Printf("Using in-memory repository")
-	}
-
-	c.URLService = service.NewURLService(repo, c.BaseURL)
+	c.DB = db
+	log.Printf("Connected to PostgreSQL")
 }
 
 func (c *Config) Close() error {
-	if urlService, ok := c.URLService.(interface{ Close() error }); ok {
-		return urlService.Close()
+	if c.DB != nil {
+		_ = c.DB.Close()
 	}
 	return nil
 }

@@ -1,58 +1,98 @@
 package main
 
 import (
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"fmt"
 	"log"
+	"url-shortener/internal/audit"
 	"url-shortener/internal/config"
-	"url-shortener/internal/database"
 	"url-shortener/internal/handler"
 	"url-shortener/internal/middleware"
+	"url-shortener/internal/pprof"
+	"url-shortener/internal/repository"
+	"url-shortener/internal/service"
+
+	"github.com/gin-gonic/gin"
 )
 
-func loadConfig() *config.Config {
+func loadConfig() (*config.Config, error) {
 	cfg := config.Init()
 
 	// Проверяем корректность конфигурации
 	if err := cfg.Validate(); err != nil {
-		log.Fatalf("Configuration error: %v", err)
+		return nil, fmt.Errorf("validate config: %w", err)
 	}
-	log.Printf("Configuration loaded: %v", cfg)
-
-	return cfg
+	return cfg, nil
 }
 
-func setupDatabase(cfg *config.Config, logger *zap.SugaredLogger) *database.DB {
-	if cfg.DatabaseDSN == "" {
-		logger.Warn("DATABASE_DSN is empty, database will not be initialized")
-		return nil
+func buildRepo(cfg *config.Config) (repository.URLRepository, error) {
+	if cfg.DB != nil {
+		postgresRepo, err := repository.NewPostgresURLRepository(cfg.DB.GetDB())
+		if err != nil {
+			return nil, fmt.Errorf("failed to init postgres repository: %w", err)
+		}
+		log.Printf("Using PostgreSQL repository")
+		return postgresRepo, nil
 	}
 
-	db, err := database.NewDB(cfg.DatabaseDSN)
-	if err != nil {
-		logger.Errorf("Failed to connect to database: %v", err)
-		return nil
+	if cfg.FileStoragePath != "" {
+		fileRepo, err := repository.NewFileURLRepository(cfg.FileStoragePath)
+		if err != nil {
+			return nil, fmt.Errorf("init file repository (%s): %w", cfg.FileStoragePath, err)
+		}
+		log.Printf("Using file repository: %s", cfg.FileStoragePath)
+		return fileRepo, nil
 	}
 
-	logger.Info("Connected to PostgreSQL")
-	return db
+	log.Printf("Using in-memory repository")
+	return repository.NewInMemoryURLRepository(), nil
+}
+
+func buildAuditPublisher(cfg *config.Config) *audit.Publisher {
+	pub := audit.NewPublisher()
+
+	if cfg.AuditFile != "" {
+		fs, err := audit.NewFileSink(cfg.AuditFile)
+		if err != nil {
+			log.Printf("Failed to init audit file sink: %v", err)
+		} else {
+			pub.AddSink(fs)
+			log.Printf("Audit file enabled: %s", cfg.AuditFile)
+		}
+	}
+
+	if cfg.AuditURL != "" {
+		pub.AddSink(audit.NewHTTPSink(cfg.AuditURL))
+		log.Printf("Audit remote enabled: %s", cfg.AuditURL)
+	}
+
+	// если ни одного sink нет — можно вернуть nil, чтобы хендлеры не дергали Publish
+	// но тогда нужно уметь в handler.NewHandler принимать nil
+	// Я бы оставил pub даже пустым, если Publish у тебя нооп при 0 sinks.
+	return pub
 }
 
 func main() {
-	cfg := loadConfig()
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
 	defer cfg.Close()
 
 	logger := middleware.InitLogger()
 	defer logger.Sync()
 
-	db := setupDatabase(cfg, logger)
-	if db != nil {
-		defer db.Close()
+	repo, err := buildRepo(cfg)
+	if err != nil {
+		log.Fatalf("startup error: %v", err)
 	}
+	svc := service.NewURLService(repo, cfg.BaseURL)
+	defer svc.Close()
 
-	handlers := handler.NewHandler(cfg.URLService)
+	auditPub := buildAuditPublisher(cfg)
+	defer auditPub.Close()
 
-	// Настройка маршрутов
+	handlers := handler.NewHandler(svc, auditPub)
+
 	router := gin.Default()
 
 	router.Use(middleware.GzipMiddleware())
@@ -72,11 +112,12 @@ func main() {
 	authGroup.GET("/api/user/urls", handlers.GetUserURLs)
 	authGroup.DELETE("/api/user/urls", handlers.DeleteUserURLs)
 
-	// Регистрируем обработчик для бд
-	pingHandler := handler.NewPingHandler(db)
+	pingHandler := handler.NewPingHandler(cfg.DB)
 	router.GET("/ping", pingHandler.Ping)
-
+	pprof.Register(router)
 	// Запуск сервера
-	//log.Printf("Server starting on %s %s", cfg.BaseURL, cfg.ServerAddress)
-	router.Run(cfg.ServerAddress)
+	log.Printf("Server starting on %s", cfg.BaseURL)
+	if err := router.Run(cfg.ServerAddress); err != nil {
+		log.Fatalf("server run error: %v", err)
+	}
 }
