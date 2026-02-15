@@ -1,4 +1,4 @@
-// database/migrate.go
+// Package database/migrate.go
 package database
 
 import (

@@ -189,8 +189,8 @@ func UserAuth() gin.HandlerFunc {
 		rawCookie, err := c.Cookie(auth.CookieName())
 
 		if err != nil || rawCookie == "" {
-			userID, newToken, err := auth.GetOrCreateUserIDFromCookie("")
-			if err != nil {
+			userID, newToken, getOrCreateErr := auth.GetOrCreateUserIDFromCookie("")
+			if getOrCreateErr != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "auth error"})
 				c.Abort()
 				return

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"url-shortener/internal/audit"
 	"url-shortener/internal/config"
 	"url-shortener/internal/handler"
@@ -72,9 +73,16 @@ func buildAuditPublisher(cfg *config.Config) *audit.Publisher {
 }
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+}
+
+func run() error {
 	cfg, err := loadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		return fmt.Errorf("load config: %w", err)
+		// log.Fatalf("Failed to load config: %v", err)
 	}
 	defer cfg.Close()
 
@@ -83,7 +91,8 @@ func main() {
 
 	repo, err := buildRepo(cfg)
 	if err != nil {
-		log.Fatalf("startup error: %v", err)
+		return fmt.Errorf("build repository: %w", err)
+		// log.Fatalf("startup error: %v", err)
 	}
 	svc := service.NewURLService(repo, cfg.BaseURL)
 	defer svc.Close()
@@ -98,7 +107,7 @@ func main() {
 	router.Use(middleware.GzipMiddleware())
 	router.Use(middleware.HTTPLoggerMiddleware(logger))
 
-	//Добавляем авторизацию
+	// Добавляем авторизацию
 	authGroup := router.Group("/")
 	authGroup.Use(middleware.UserAuth())
 
@@ -118,6 +127,8 @@ func main() {
 	// Запуск сервера
 	log.Printf("Server starting on %s", cfg.BaseURL)
 	if err := router.Run(cfg.ServerAddress); err != nil {
-		log.Fatalf("server run error: %v", err)
+		return fmt.Errorf("server run error: %v", err)
+		// log.Fatalf("server run error: %v", err)
 	}
+	return nil
 }

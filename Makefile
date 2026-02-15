@@ -18,3 +18,6 @@ check:
 fix_check:
 	goimports -w .
 	gofmt -w .
+
+static_lint:
+	go run ./cmd/staticlint ./...

@@ -1,4 +1,4 @@
-// database/database.go
+// Package database/database.go
 package database
 
 import (

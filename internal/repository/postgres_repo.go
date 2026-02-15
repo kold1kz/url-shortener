@@ -64,9 +64,9 @@ func (r *PostgresURLRepository) Create(url *model.URL) error {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 			// URL уже существует, находим существующую запись
-			existing, err := r.FindByOriginalURL(url.Original)
-			if err != nil {
-				return fmt.Errorf("failed to find existing URL: %w", err)
+			existing, findErr := r.FindByOriginalURL(url.Original)
+			if findErr != nil {
+				return fmt.Errorf("failed to find existing URL: %w", findErr)
 			}
 			if existing != nil {
 				return &URLConflictError{ExistingURL: existing}
