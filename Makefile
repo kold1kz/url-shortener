@@ -21,3 +21,6 @@ fix_check:
 
 staticlint:
 	go run ./cmd/staticlint ./...
+
+reset:
+	go run ./cmd/reset
