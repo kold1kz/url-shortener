@@ -15,6 +15,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
+
+func na(s string) string {
+	if s == "" {
+		return "N/A"
+	}
+	return s
+}
+
 func loadConfig() (*config.Config, error) {
 	cfg := config.Init()
 
@@ -73,6 +86,9 @@ func buildAuditPublisher(cfg *config.Config) *audit.Publisher {
 }
 
 func main() {
+	fmt.Printf("Build version: %s\n", na(buildVersion))
+	fmt.Printf("Build date: %s\n", na(buildDate))
+	fmt.Printf("Build commit: %s\n", na(buildCommit))
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
