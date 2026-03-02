@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
+	"url-shortener/cmd/certutil"
 	"url-shortener/internal/audit"
 	"url-shortener/internal/config"
 	"url-shortener/internal/handler"
@@ -78,10 +80,6 @@ func buildAuditPublisher(cfg *config.Config) *audit.Publisher {
 		pub.AddSink(audit.NewHTTPSink(cfg.AuditURL))
 		log.Printf("Audit remote enabled: %s", cfg.AuditURL)
 	}
-
-	// если ни одного sink нет — можно вернуть nil, чтобы хендлеры не дергали Publish
-	// но тогда нужно уметь в handler.NewHandler принимать nil
-	// Я бы оставил pub даже пустым, если Publish у тебя нооп при 0 sinks.
 	return pub
 }
 
@@ -141,10 +139,27 @@ func run() error {
 	router.GET("/ping", pingHandler.Ping)
 	pprof.Register(router)
 	// Запуск сервера
+	if cfg.EnableHttps {
+		log.Printf("Server starting with secure on %s", cfg.BaseURL)
+		certPath, keyPath, err := certutil.EnsureCertFiles(certutil.EnsureOptions{
+			CertPath:    "./cert/cert.pem",
+			KeyPath:     "./cert/key.pem",
+			ValidFor:    30 * 24 * time.Hour, // 30 дней
+			RenewBefore: 24 * time.Hour,      // обновлять если осталось < 1 дня
+			Hosts:       []string{"localhost", "127.0.0.1", "::1"},
+		})
+		if err != nil {
+			return fmt.Errorf("ensure tls certs: %w", err)
+		}
+
+		if err := router.RunTLS(cfg.ServerAddress, certPath, keyPath); err != nil {
+			return fmt.Errorf("https server run error: %w", err)
+		}
+		return nil
+	}
 	log.Printf("Server starting on %s", cfg.BaseURL)
 	if err := router.Run(cfg.ServerAddress); err != nil {
 		return fmt.Errorf("server run error: %v", err)
-		// log.Fatalf("server run error: %v", err)
 	}
 	return nil
 }

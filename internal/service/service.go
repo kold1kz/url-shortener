@@ -142,11 +142,12 @@ func (s *urlService) ShortenURL(ctx context.Context, originalURL, userID string)
 	}
 
 	var id string
+	var u *model.URL
 	for {
 		id = generateID(10)
-		u, findErr := s.repo.FindByID(id)
-		if findErr != nil {
-			return nil, findErr
+		u, err = s.repo.FindByID(id)
+		if err != nil {
+			return nil, err
 		}
 		if u == nil {
 			break
@@ -160,15 +161,15 @@ func (s *urlService) ShortenURL(ctx context.Context, originalURL, userID string)
 		UserID:   userID, // 👈 важное место
 	}
 
-	createErr := s.repo.Create(url)
-	if createErr != nil {
-		if repository.IsURLConflictError(createErr) {
-			if conflictErr, ok := createErr.(*repository.URLConflictError); ok && conflictErr.ExistingURL != nil {
+	err = s.repo.Create(url)
+	if err != nil {
+		if repository.IsURLConflictError(err) {
+			if conflictErr, ok := err.(*repository.URLConflictError); ok && conflictErr.ExistingURL != nil {
 				return conflictErr.ExistingURL, ErrURLAlreadyExists
 			}
 			return nil, ErrURLAlreadyExists
 		}
-		return nil, fmt.Errorf("failed to create URL: %w", createErr)
+		return nil, fmt.Errorf("failed to create URL: %w", err)
 	}
 
 	return url, nil
