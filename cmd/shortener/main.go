@@ -139,7 +139,7 @@ func run() error {
 	router.GET("/ping", pingHandler.Ping)
 	pprof.Register(router)
 	// Запуск сервера
-	if cfg.EnableHttps {
+	if cfg.EnableHTTPS {
 		log.Printf("Server starting with secure on %s", cfg.BaseURL)
 		certPath, keyPath, err := certutil.EnsureCertFiles(certutil.EnsureOptions{
 			CertPath:    "./cert/cert.pem",

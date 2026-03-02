@@ -13,7 +13,7 @@ type Config struct {
 	BaseURL         string
 	FileStoragePath string
 	DatabaseDSN     string
-	EnableHttps     bool
+	EnableHTTPS     bool
 
 	AuditFile string
 	AuditURL  string
@@ -30,7 +30,7 @@ func Init() *Config {
 	flag.StringVar(&cfg.DatabaseDSN, "d", "postgres://root:root@localhost:5433/db", "Database DSN")
 	flag.StringVar(&cfg.AuditFile, "audit-file", "", "Audit file path")
 	flag.StringVar(&cfg.AuditURL, "audit-url", "", "Audit remote URL")
-	flag.BoolVar(&cfg.EnableHttps, "s", false, "Start server with HTTPS")
+	flag.BoolVar(&cfg.EnableHTTPS, "s", false, "Start server with HTTPS")
 	flag.Parse()
 
 	if envServer := os.Getenv("SERVER_ADDRESS"); envServer != "" {
@@ -54,8 +54,8 @@ func Init() *Config {
 	if envAuditFile := os.Getenv("AUDIT_FILE"); envAuditFile != "" {
 		cfg.AuditFile = envAuditFile
 	}
-	if envEnableHttps := os.Getenv("ENABLE_HTTPS"); envEnableHttps != "" {
-		cfg.EnableHttps = true
+	if envEnableHTTPS := os.Getenv("ENABLE_HTTPS"); envEnableHTTPS != "" {
+		cfg.EnableHTTPS = true
 	}
 
 	cfg.initDB()
