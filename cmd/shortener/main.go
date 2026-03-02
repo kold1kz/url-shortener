@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"url-shortener/internal/audit"
 	"url-shortener/internal/config"
 	"url-shortener/internal/handler"
@@ -13,6 +14,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
+
+func na(s string) string {
+	if s == "" {
+		return "N/A"
+	}
+	return s
+}
 
 func loadConfig() (*config.Config, error) {
 	cfg := config.Init()
@@ -72,9 +86,19 @@ func buildAuditPublisher(cfg *config.Config) *audit.Publisher {
 }
 
 func main() {
+	fmt.Printf("Build version: %s\n", na(buildVersion))
+	fmt.Printf("Build date: %s\n", na(buildDate))
+	fmt.Printf("Build commit: %s\n", na(buildCommit))
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+}
+
+func run() error {
 	cfg, err := loadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		return fmt.Errorf("load config: %w", err)
+		// log.Fatalf("Failed to load config: %v", err)
 	}
 	defer cfg.Close()
 
@@ -83,7 +107,8 @@ func main() {
 
 	repo, err := buildRepo(cfg)
 	if err != nil {
-		log.Fatalf("startup error: %v", err)
+		return fmt.Errorf("build repository: %w", err)
+		// log.Fatalf("startup error: %v", err)
 	}
 	svc := service.NewURLService(repo, cfg.BaseURL)
 	defer svc.Close()
@@ -98,7 +123,7 @@ func main() {
 	router.Use(middleware.GzipMiddleware())
 	router.Use(middleware.HTTPLoggerMiddleware(logger))
 
-	//Добавляем авторизацию
+	// Добавляем авторизацию
 	authGroup := router.Group("/")
 	authGroup.Use(middleware.UserAuth())
 
@@ -118,6 +143,8 @@ func main() {
 	// Запуск сервера
 	log.Printf("Server starting on %s", cfg.BaseURL)
 	if err := router.Run(cfg.ServerAddress); err != nil {
-		log.Fatalf("server run error: %v", err)
+		return fmt.Errorf("server run error: %v", err)
+		// log.Fatalf("server run error: %v", err)
 	}
+	return nil
 }

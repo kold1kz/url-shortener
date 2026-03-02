@@ -115,9 +115,9 @@ func TestInMemoryRepository_BasicFlow(t *testing.T) {
 
 	// Меняем слайс локально: добавляем элемент.
 	// Если репо вернул шареный слайс, это могло бы “протечь” внутрь.
-	orig = append(orig, &model.URL{ID: "x", Original: "https://x.com", Short: "http://s/x", UserID: "u1"})
-	orig2 := append(orig, &model.URL{ID: "x"})
-	_ = orig2
+	// orig = append(orig, &model.URL{ID: "x", Original: "https://x.com", Short: "http://s/x", UserID: "u1"})
+	// orig2 := append(orig, &model.URL{ID: "x"})
+	// _ = orig2
 	again, _ := repo.FindByUserID("u1")
 	if len(again) != 2 {
 		t.Fatalf("expected FindByUserID to return independent slice; got len=%d", len(again))
@@ -195,8 +195,8 @@ func TestFileRepository_LoadFromFile_MissingAndEmpty(t *testing.T) {
 	}
 
 	// empty file -> ok
-	if err := os.WriteFile(path, []byte{}, 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
+	if writeErr := os.WriteFile(path, []byte{}, 0644); writeErr != nil {
+		t.Fatalf("WriteFile: %v", writeErr)
 	}
 	repo2, err := NewFileURLRepository(path)
 	if err != nil {
@@ -231,15 +231,15 @@ func TestFileRepository_PersistAndQueries(t *testing.T) {
 
 	u1 := &model.URL{ID: "1", Original: "https://a.com", Short: "http://s/1", UserID: "u1"}
 	u2 := &model.URL{ID: "2", Original: "https://b.com", Short: "http://s/2", UserID: "u1"}
-	if err := repo.Create(u1); err != nil {
-		t.Fatalf("Create: %v", err)
+	if createErr := repo.Create(u1); createErr != nil {
+		t.Fatalf("Create: %v", createErr)
 	}
-	if err := repo.Create(u2); err != nil {
-		t.Fatalf("Create: %v", err)
+	if createU2Err := repo.Create(u2); createU2Err != nil {
+		t.Fatalf("Create: %v", createU2Err)
 	}
 
 	// duplicate original
-	if err := repo.Create(&model.URL{ID: "x", Original: u1.Original, Short: "http://s/x", UserID: "u1"}); err == nil {
+	if duplErr := repo.Create(&model.URL{ID: "x", Original: u1.Original, Short: "http://s/x", UserID: "u1"}); duplErr == nil {
 		t.Fatalf("expected error on duplicate original")
 	}
 
@@ -260,8 +260,8 @@ func TestFileRepository_PersistAndQueries(t *testing.T) {
 	}
 
 	// MarkAsDeleted should persist
-	if err := repo.MarkAsDeleted(context.Background(), "u1", []string{"1"}); err != nil {
-		t.Fatalf("MarkAsDeleted: %v", err)
+	if markErr := repo.MarkAsDeleted(context.Background(), "u1", []string{"1"}); markErr != nil {
+		t.Fatalf("MarkAsDeleted: %v", markErr)
 	}
 
 	_ = repo.Close()
@@ -290,16 +290,16 @@ func TestFileRepository_CreateBatch(t *testing.T) {
 	defer repo.Close()
 
 	// seed
-	if err := repo.Create(&model.URL{ID: "1", Original: "https://a.com", Short: "http://s/1", UserID: "u1"}); err != nil {
-		t.Fatalf("Create: %v", err)
+	if createErr := repo.Create(&model.URL{ID: "1", Original: "https://a.com", Short: "http://s/1", UserID: "u1"}); createErr != nil {
+		t.Fatalf("Create: %v", createErr)
 	}
 
 	batch := []*model.URL{
 		{ID: "dup", Original: "https://a.com", Short: "http://s/dup", UserID: "u1"}, // duplicate original -> skip
 		{ID: "2", Original: "https://b.com", Short: "http://s/2", UserID: "u1"},
 	}
-	if err := repo.CreateBatch(batch); err != nil {
-		t.Fatalf("CreateBatch: %v", err)
+	if createBatchErr := repo.CreateBatch(batch); createBatchErr != nil {
+		t.Fatalf("CreateBatch: %v", createBatchErr)
 	}
 
 	u, _ := repo.FindByOriginalURL("https://a.com")

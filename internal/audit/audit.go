@@ -7,6 +7,7 @@ const (
 	ActionFollow  Action = "follow"
 )
 
+// generate:reset
 type Event struct {
 	TS     int64  `json:"ts"`
 	Action Action `json:"action"`

@@ -4,6 +4,7 @@ package model
 //
 // Используется как доменная модель в сервисе и репозиториях.
 // Поле UserID не сериализуется в JSON-ответах.
+// generate:reset
 type URL struct {
 	// ID — уникальный идентификатор URL.
 	ID string `json:"id"`
@@ -20,6 +21,7 @@ type URL struct {
 
 // ShortenRequest описывает JSON-запрос
 // на создание сокращённого URL.
+// generate:reset
 type ShortenRequest struct {
 	// URL — исходный URL для сокращения.
 	URL string `json:"url" binding:"required"`
@@ -27,6 +29,7 @@ type ShortenRequest struct {
 
 // ShortenResponse описывает JSON-ответ
 // с результатом сокращения URL.
+// generate:reset
 type ShortenResponse struct {
 	// Result — сокращённый URL.
 	Result string `json:"result"`
@@ -34,6 +37,7 @@ type ShortenResponse struct {
 
 // BatchRequest описывает элемент batch-запроса
 // на массовое сокращение URL.
+// generate:reset
 type BatchRequest struct {
 	// CorrelationID — идентификатор запроса клиента,
 	// используется для сопоставления ответа.
@@ -45,6 +49,7 @@ type BatchRequest struct {
 
 // BatchResponse описывает элемент ответа
 // batch-операции сокращения URL.
+// generate:reset
 type BatchResponse struct {
 	// CorrelationID — идентификатор запроса клиента.
 	CorrelationID string `json:"correlation_id"`
@@ -55,6 +60,7 @@ type BatchResponse struct {
 
 // UserURLResponse описывает URL,
 // принадлежащий конкретному пользователю.
+// generate:reset
 type UserURLResponse struct {
 	// ShortURL — сокращённый URL.
 	ShortURL string `json:"short_url"`

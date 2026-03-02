@@ -157,10 +157,10 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 	}
 
 	var req model.ShortenRequest
-	//if err := c.ShouldBindJSON(&req); err != nil {
+	//  if err := c.ShouldBindJSON(&req); err != nil {
 	//	c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
 	//	return
-	//}
+	//  }
 
 	dec := json.NewDecoder(c.Request.Body)
 	if err := dec.Decode(&req); err != nil {
@@ -212,7 +212,7 @@ func (h *Handlers) ShortenJSONUrl(c *gin.Context) {
 			URL:    req.URL,
 		})
 	}
-	//c.JSON(http.StatusCreated, resp)
+	// c.JSON(http.StatusCreated, resp)
 }
 
 // ShortenURLBatch сокращает набор URL одной пачкой.

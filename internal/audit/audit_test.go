@@ -113,17 +113,17 @@ func TestFileSink_Consume_WritesJSONLine_AndClose(t *testing.T) {
 	}
 
 	ev := audit.Event{TS: 111, Action: audit.ActionFollow, UserID: "u2", URL: "https://example.com"}
-	if err := s.Consume(context.Background(), ev); err != nil {
-		t.Fatalf("Consume error: %v", err)
+	if consumeRrr := s.Consume(context.Background(), ev); consumeRrr != nil {
+		t.Fatalf("Consume error: %v", consumeRrr)
 	}
 
-	if err := s.Close(); err != nil {
-		t.Fatalf("Close error: %v", err)
+	if closeErr := s.Close(); closeErr != nil {
+		t.Fatalf("Close error: %v", closeErr)
 	}
 
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
+	b, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("read file: %v", readErr)
 	}
 	got := string(b)
 
