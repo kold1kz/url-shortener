@@ -13,7 +13,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -282,25 +281,16 @@ func Test_generateSelfSigned_DefaultHostsWhenEmpty(t *testing.T) {
 	}
 }
 
-func Test_generateSelfSigned_WriteCertError_ReadOnlyDir(t *testing.T) {
-	// На Windows chmod семантически не гарантирован.
-	if runtime.GOOS == "windows" {
-		t.Skip("chmod-based permission test is unreliable on windows")
-	}
-
+func Test_generateSelfSigned_WriteCertError_PathIsDir(t *testing.T) {
 	dir := t.TempDir()
-	roDir := filepath.Join(dir, "ro")
-	if err := os.MkdirAll(roDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	// делаем директорию read-only
-	if err := os.Chmod(roDir, 0o555); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(roDir, 0o755) })
 
-	certPath := filepath.Join(roDir, "cert.pem")
-	keyPath := filepath.Join(dir, "key.pem") // ключ писать можно, но до него не дойдет, если упадем на cert
+	// certPath будет директорией, а не файлом => WriteFile всегда упадёт.
+	certPath := filepath.Join(dir, "cert.pem")
+	if err := os.Mkdir(certPath, 0o755); err != nil {
+		t.Fatalf("mkdir certPath dir: %v", err)
+	}
+
+	keyPath := filepath.Join(dir, "key.pem")
 
 	err := generateSelfSigned(certPath, keyPath, []string{"localhost"}, 24*time.Hour)
 	if err == nil {
