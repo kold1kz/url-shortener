@@ -96,8 +96,8 @@ func run() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
-		// log.Fatalf("Failed to load config: %v", err)
 	}
+
 	defer cfg.Close()
 
 	logger := middleware.InitLogger()
@@ -106,7 +106,6 @@ func run() error {
 	repo, err := buildRepo(cfg)
 	if err != nil {
 		return fmt.Errorf("build repository: %w", err)
-		// log.Fatalf("startup error: %v", err)
 	}
 	svc := service.NewURLService(repo, cfg.BaseURL)
 	defer svc.Close()
@@ -138,6 +137,7 @@ func run() error {
 	pingHandler := handler.NewPingHandler(cfg.DB)
 	router.GET("/ping", pingHandler.Ping)
 	pprof.Register(router)
+
 	// Запуск сервера
 	if cfg.EnableHTTPS {
 		log.Printf("Server starting with secure on %s", cfg.BaseURL)

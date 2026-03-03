@@ -25,3 +25,8 @@ vendor/
 # certs
 .cert/
 *.pem
+
+*.env
+*env
+
+*config.json

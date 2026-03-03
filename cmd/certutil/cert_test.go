@@ -335,14 +335,14 @@ func TestEnsureCertFiles_GeneratesWhenMissing_AndAppliesDefaults(t *testing.T) {
 	}
 
 	// файлы реально созданы
-	if _, err := os.Stat(certPath); err != nil {
+	if _, err = os.Stat(certPath); err != nil {
 		t.Fatalf("cert stat: %v", err)
 	}
-	if _, err := os.Stat(keyPath); err != nil {
+	if _, err = os.Stat(keyPath); err != nil {
 		t.Fatalf("key stat: %v", err)
 	}
-
-	ok, err := certIsValid(certPath, []string{"localhost"}, 0)
+	var ok bool
+	ok, err = certIsValid(certPath, []string{"localhost"}, 0)
 	if err != nil || !ok {
 		t.Fatalf("expected valid cert, ok=%v err=%v", ok, err)
 	}
