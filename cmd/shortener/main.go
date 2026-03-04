@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 	"url-shortener/cmd/certutil"
 	"url-shortener/internal/audit"
@@ -139,27 +143,61 @@ func run() error {
 	pprof.Register(router)
 
 	// Запуск сервера
+	srv := &http.Server{
+		Addr:    cfg.ServerAddress,
+		Handler: router,
+	}
+
+	// канал сигналов
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
+	defer signal.Stop(sigCh)
+
+	errCh := make(chan error, 1)
+
 	if cfg.EnableHTTPS {
 		log.Printf("Server starting with secure on %s", cfg.BaseURL)
+
 		certPath, keyPath, err := certutil.EnsureCertFiles(certutil.EnsureOptions{
 			CertPath:    "./cert/cert.pem",
 			KeyPath:     "./cert/key.pem",
-			ValidFor:    30 * 24 * time.Hour, // 30 дней
-			RenewBefore: 24 * time.Hour,      // обновлять если осталось < 1 дня
+			ValidFor:    30 * 24 * time.Hour,
+			RenewBefore: 24 * time.Hour,
 			Hosts:       []string{"localhost", "127.0.0.1", "::1"},
 		})
 		if err != nil {
 			return fmt.Errorf("ensure tls certs: %w", err)
 		}
 
-		if err := router.RunTLS(cfg.ServerAddress, certPath, keyPath); err != nil {
-			return fmt.Errorf("https server run error: %w", err)
+		go func() {
+			errCh <- srv.ListenAndServeTLS(certPath, keyPath)
+		}()
+	} else {
+		log.Printf("Server starting on %s", cfg.BaseURL)
+		go func() {
+			errCh <- srv.ListenAndServe()
+		}()
+	}
+
+	select {
+	case sig := <-sigCh:
+		log.Printf("shutdown signal received: %s", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			_ = srv.Close()
+			return fmt.Errorf("server shutdown: %w", err)
 		}
+
+		log.Printf("server stopped gracefully")
 		return nil
+
+	case err := <-errCh:
+		// нормальная остановка сервера возвращает http.ErrServerClosed
+		if err == nil || err == http.ErrServerClosed {
+			return nil
+		}
+		return fmt.Errorf("server run error: %w", err)
 	}
-	log.Printf("Server starting on %s", cfg.BaseURL)
-	if err := router.Run(cfg.ServerAddress); err != nil {
-		return fmt.Errorf("server run error: %v", err)
-	}
-	return nil
 }
