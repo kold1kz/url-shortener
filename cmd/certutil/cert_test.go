@@ -32,23 +32,29 @@ func mustWriteFile(t *testing.T, path string, data []byte, perm os.FileMode) {
 
 func readAll(t *testing.T, path string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	return b
+	return data
 }
 
 func writeCertPEM(t *testing.T, certPath string, certDER []byte) {
 	t.Helper()
-	p := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	mustWriteFile(t, certPath, p, 0o644)
+	pemData := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certDER,
+	})
+	mustWriteFile(t, certPath, pemData, 0o644)
 }
 
 func writeBrokenCertPEMType(t *testing.T, certPath string) {
 	t.Helper()
-	p := pem.EncodeToMemory(&pem.Block{Type: "NOT_A_CERT", Bytes: []byte("x")})
-	mustWriteFile(t, certPath, p, 0o644)
+	pemData := pem.EncodeToMemory(&pem.Block{
+		Type:  "NOT_A_CERT",
+		Bytes: []byte("x"),
+	})
+	mustWriteFile(t, certPath, pemData, 0o644)
 }
 
 func genCertDER(t *testing.T, hosts []string, notBefore, notAfter time.Time) []byte {
@@ -78,19 +84,18 @@ func genCertDER(t *testing.T, hosts []string, notBefore, notAfter time.Time) []b
 		BasicConstraintsValid: true,
 	}
 
-	for _, h := range hosts {
-		h = strings.TrimSpace(h)
-		if h == "" {
+	for _, host := range hosts {
+		host = strings.TrimSpace(host)
+		if host == "" {
 			continue
 		}
-		if ip := net.ParseIP(h); ip != nil {
+		if ip := net.ParseIP(host); ip != nil {
 			tpl.IPAddresses = append(tpl.IPAddresses, ip)
 		} else {
-			tpl.DNSNames = append(tpl.DNSNames, h)
+			tpl.DNSNames = append(tpl.DNSNames, host)
 		}
 	}
 
-	// если ничего не передали — как в прод-коде: localhost + loopback
 	if len(tpl.DNSNames) == 0 && len(tpl.IPAddresses) == 0 {
 		tpl.DNSNames = []string{"localhost"}
 		tpl.IPAddresses = []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
@@ -150,9 +155,11 @@ func Test_certIsValid_ParseError(t *testing.T) {
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "cert.pem")
 
-	// PEM с типом CERTIFICATE, но битые DER-данные
-	p := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("garbage-der")})
-	mustWriteFile(t, certPath, p, 0o644)
+	pemData := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: []byte("garbage-der"),
+	})
+	mustWriteFile(t, certPath, pemData, 0o644)
 
 	ok, err := certIsValid(certPath, nil, 0)
 	if err == nil {
@@ -174,8 +181,7 @@ func Test_certIsValid_NearExpiry(t *testing.T) {
 	der := genCertDER(t, []string{"localhost"}, now.Add(-time.Minute), now.Add(30*time.Minute))
 	writeCertPEM(t, certPath, der)
 
-	// renewBefore больше, чем оставшийся срок => считаем протухшим
-	ok, err := certIsValid(certPath, []string{"localhost"}, 1*time.Hour)
+	ok, err := certIsValid(certPath, []string{"localhost"}, time.Hour)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -269,7 +275,6 @@ func Test_generateSelfSigned_DefaultHostsWhenEmpty(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 
-	// проверим: сертификат валиден и подходит под localhost/127.0.0.1
 	ok, err := certIsValid(certPath, []string{"localhost"}, 0)
 	if err != nil || !ok {
 		t.Fatalf("expected valid for localhost, ok=%v err=%v", ok, err)
@@ -284,7 +289,6 @@ func Test_generateSelfSigned_DefaultHostsWhenEmpty(t *testing.T) {
 func Test_generateSelfSigned_WriteCertError_PathIsDir(t *testing.T) {
 	dir := t.TempDir()
 
-	// certPath будет директорией, а не файлом => WriteFile всегда упадёт.
 	certPath := filepath.Join(dir, "cert.pem")
 	if err := os.Mkdir(certPath, 0o755); err != nil {
 		t.Fatalf("mkdir certPath dir: %v", err)
@@ -318,8 +322,6 @@ func TestEnsureCertFiles_GeneratesWhenMissing_AndAppliesDefaults(t *testing.T) {
 	certPath := filepath.Join(dir, "tls", "cert.pem")
 	keyPath := filepath.Join(dir, "tls", "key.pem")
 
-	// ValidFor=0 => должен примениться дефолт
-	// RenewBefore=-1 => должен стать 0
 	gotCert, gotKey, err := EnsureCertFiles(EnsureOptions{
 		CertPath:    certPath,
 		KeyPath:     keyPath,
@@ -330,19 +332,28 @@ func TestEnsureCertFiles_GeneratesWhenMissing_AndAppliesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if gotCert != certPath || gotKey != keyPath {
-		t.Fatalf("unexpected paths: %s %s", gotCert, gotKey)
+
+	expectedCertPath := certPath
+	expectedKeyPath := keyPath
+
+	if gotCert != expectedCertPath || gotKey != expectedKeyPath {
+		t.Fatalf(
+			"unexpected paths: got cert=%q key=%q, expected cert=%q key=%q",
+			gotCert, gotKey, expectedCertPath, expectedKeyPath,
+		)
 	}
 
-	// файлы реально созданы
-	if _, err = os.Stat(certPath); err != nil {
+	_, err = os.Stat(certPath)
+	if err != nil {
 		t.Fatalf("cert stat: %v", err)
 	}
-	if _, err = os.Stat(keyPath); err != nil {
+
+	_, err = os.Stat(keyPath)
+	if err != nil {
 		t.Fatalf("key stat: %v", err)
 	}
-	var ok bool
-	ok, err = certIsValid(certPath, []string{"localhost"}, 0)
+
+	ok, err := certIsValid(certPath, []string{"localhost"}, 0)
 	if err != nil || !ok {
 		t.Fatalf("expected valid cert, ok=%v err=%v", ok, err)
 	}
@@ -353,7 +364,6 @@ func TestEnsureCertFiles_ReturnsExistingWhenValid(t *testing.T) {
 	certPath := filepath.Join(dir, "cert.pem")
 	keyPath := filepath.Join(dir, "key.pem")
 
-	// заранее создаем валидные файлы
 	if err := generateSelfSigned(certPath, keyPath, []string{"example.com"}, 24*time.Hour); err != nil {
 		t.Fatalf("gen: %v", err)
 	}
@@ -369,8 +379,15 @@ func TestEnsureCertFiles_ReturnsExistingWhenValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if gotCert != certPath || gotKey != keyPath {
-		t.Fatalf("unexpected paths: %s %s", gotCert, gotKey)
+
+	expectedCertPath := certPath
+	expectedKeyPath := keyPath
+
+	if gotCert != expectedCertPath || gotKey != expectedKeyPath {
+		t.Fatalf(
+			"unexpected paths: got cert=%q key=%q, expected cert=%q key=%q",
+			gotCert, gotKey, expectedCertPath, expectedKeyPath,
+		)
 	}
 
 	after := readAll(t, certPath)
@@ -384,13 +401,11 @@ func TestEnsureCertFiles_RegeneratesOnHostMismatch(t *testing.T) {
 	certPath := filepath.Join(dir, "cert.pem")
 	keyPath := filepath.Join(dir, "key.pem")
 
-	// создаем сертификат под localhost
 	if err := generateSelfSigned(certPath, keyPath, []string{"localhost"}, 24*time.Hour); err != nil {
 		t.Fatalf("gen: %v", err)
 	}
 	oldCert := readAll(t, certPath)
 
-	// теперь требуем example.com => certIsValid должен сказать mismatch => Ensure перегенерит
 	_, _, err := EnsureCertFiles(EnsureOptions{
 		CertPath:    certPath,
 		KeyPath:     keyPath,
@@ -416,13 +431,12 @@ func TestEnsureCertFiles_RegeneratesOnHostMismatch(t *testing.T) {
 func TestEnsureCertFiles_MkdirFails_WhenDirIsFile(t *testing.T) {
 	dir := t.TempDir()
 
-	// делаем "директорию" файлом, чтобы MkdirAll(filepath.Dir(certPath)) упал
 	badDirAsFile := filepath.Join(dir, "not_a_dir")
 	if err := os.WriteFile(badDirAsFile, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	certPath := filepath.Join(badDirAsFile, "cert.pem") // Dir(certPath) == badDirAsFile (file)
+	certPath := filepath.Join(badDirAsFile, "cert.pem")
 	keyPath := filepath.Join(dir, "key.pem")
 
 	_, _, err := EnsureCertFiles(EnsureOptions{
@@ -448,7 +462,7 @@ func TestEnsureCertFiles_MkdirKeyFails_WhenDirIsFile(t *testing.T) {
 	if err := os.WriteFile(badDirAsFile, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	keyPath := filepath.Join(badDirAsFile, "key.pem") // Dir(keyPath) == badDirAsFile (file)
+	keyPath := filepath.Join(badDirAsFile, "key.pem")
 
 	_, _, err := EnsureCertFiles(EnsureOptions{
 		CertPath: certPath,
@@ -463,7 +477,6 @@ func TestEnsureCertFiles_MkdirKeyFails_WhenDirIsFile(t *testing.T) {
 	}
 }
 
-// Доп. тест: “протухший” сертификат заставляет Ensure перегенерировать.
 func TestEnsureCertFiles_RegeneratesOnExpired(t *testing.T) {
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "cert.pem")
@@ -473,7 +486,6 @@ func TestEnsureCertFiles_RegeneratesOnExpired(t *testing.T) {
 	expiredDER := genCertDER(t, []string{"localhost"}, now.Add(-2*time.Hour), now.Add(-1*time.Hour))
 	writeCertPEM(t, certPath, expiredDER)
 
-	// ключ может быть любым — его валидность здесь не проверяется
 	mustWriteFile(t, keyPath, []byte("dummy key"), 0o600)
 
 	oldCert := readAll(t, certPath)
@@ -500,7 +512,6 @@ func TestEnsureCertFiles_RegeneratesOnExpired(t *testing.T) {
 	}
 }
 
-// sanity: ensure errors are wrapped consistently
 func TestErrorWrappingSanity(t *testing.T) {
 	err := fmt.Errorf("tlsutil: create cert: %w", errors.New("boom"))
 	if !strings.Contains(err.Error(), "tlsutil: create cert") {

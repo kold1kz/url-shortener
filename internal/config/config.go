@@ -95,9 +95,6 @@ func Init() *Config {
 }
 
 func detectConfigFile() string {
-	if p := os.Getenv("CONFIG"); p != "" {
-		return p
-	}
 
 	for i := 0; i < len(os.Args); i++ {
 		if os.Args[i] == "-c" || os.Args[i] == "-config" {
@@ -105,6 +102,9 @@ func detectConfigFile() string {
 				return os.Args[i+1]
 			}
 		}
+	}
+	if p := os.Getenv("CONFIG"); p != "" {
+		return p
 	}
 	return ""
 }
