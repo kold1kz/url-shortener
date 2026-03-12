@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -118,7 +119,16 @@ func run() error {
 	auditPub := buildAuditPublisher(cfg, logger)
 	defer auditPub.Close()
 
-	handlers := handler.NewHandler(svc, auditPub)
+	var trustedSubnet *net.IPNet
+	if cfg.TrustedSubnet != "" {
+		_, subnet, err := net.ParseCIDR(cfg.TrustedSubnet)
+		if err != nil {
+			return fmt.Errorf("parse trusted subnet: %w", err)
+		}
+		trustedSubnet = subnet
+	}
+
+	handlers := handler.NewHandler(svc, auditPub, trustedSubnet)
 
 	router := gin.Default()
 	router.Use(middleware.GzipMiddleware())
@@ -133,9 +143,9 @@ func run() error {
 	authGroup.POST("/api/shorten/batch", handlers.ShortenURLBatch)
 	authGroup.GET("/api/user/urls", handlers.GetUserURLs)
 	authGroup.DELETE("/api/user/urls", handlers.DeleteUserURLs)
-
 	pingHandler := handler.NewPingHandler(cfg.DB)
 	router.GET("/ping", pingHandler.Ping)
+	router.GET("/api/internal/stats", handlers.GetInternalStats)
 
 	pprof.Register(router)
 

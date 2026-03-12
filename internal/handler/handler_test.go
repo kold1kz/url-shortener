@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,6 +27,21 @@ type MockServiceWithError struct{}
 
 type MockServiceEmptyUserURLs struct{}
 
+type MockStatsService struct {
+	stats *model.StatsResponse
+	err   error
+}
+
+func mustParseCIDR(t *testing.T, cidr string) *net.IPNet {
+	t.Helper()
+
+	_, subnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		t.Fatalf("parse cidr: %v", err)
+	}
+	return subnet
+}
+
 func (m *MockServiceWithError) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
 	return nil, errors.New("service error")
 }
@@ -40,6 +56,18 @@ func (m *MockServiceWithError) ShortenURLBatch(ctx context.Context, batch []mode
 
 func (m *MockServiceWithError) FindByUserID(ctx context.Context, userID string) ([]*model.URL, error) {
 	return nil, errors.New("service error")
+}
+
+func (m *MockServiceWithError) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+	return nil
+}
+
+func (m *MockServiceWithError) GetStats(ctx context.Context) (*model.StatsResponse, error) {
+	return nil, errors.New("service error")
+}
+
+func (m *MockServiceWithError) Close() error {
+	return nil
 }
 
 func (m *MockServiceEmptyUserURLs) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
@@ -58,11 +86,18 @@ func (m *MockServiceEmptyUserURLs) FindByUserID(ctx context.Context, userID stri
 	return []*model.URL{}, nil
 }
 
-func (m *MockServiceWithError) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+func (m *MockServiceEmptyUserURLs) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
 	return nil
 }
 
-func (m *MockServiceEmptyUserURLs) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
+func (m *MockServiceEmptyUserURLs) GetStats(ctx context.Context) (*model.StatsResponse, error) {
+	return &model.StatsResponse{
+		URLs:  0,
+		Users: 0,
+	}, nil
+}
+
+func (m *MockServiceEmptyUserURLs) Close() error {
 	return nil
 }
 
@@ -112,15 +147,42 @@ func (m *MockService) DeleteUserURLs(ctx context.Context, userID string, ids []s
 	return nil
 }
 
+func (m *MockService) GetStats(ctx context.Context) (*model.StatsResponse, error) {
+	return &model.StatsResponse{
+		URLs:  1,
+		Users: 1,
+	}, nil
+}
+
 func (m *MockService) Close() error {
 	return nil
 }
 
-func (m *MockServiceWithError) Close() error {
+func (m *MockStatsService) ShortenURL(ctx context.Context, original string, userID string) (*model.URL, error) {
+	return nil, nil
+}
+
+func (m *MockStatsService) GetOriginalURL(ctx context.Context, id string) (string, error) {
+	return "", nil
+}
+
+func (m *MockStatsService) ShortenURLBatch(ctx context.Context, batch []model.BatchRequest, userID string) ([]model.BatchResponse, error) {
+	return nil, nil
+}
+
+func (m *MockStatsService) FindByUserID(ctx context.Context, userID string) ([]*model.URL, error) {
+	return nil, nil
+}
+
+func (m *MockStatsService) DeleteUserURLs(ctx context.Context, userID string, ids []string) error {
 	return nil
 }
 
-func (m *MockServiceEmptyUserURLs) Close() error {
+func (m *MockStatsService) GetStats(ctx context.Context) (*model.StatsResponse, error) {
+	return m.stats, m.err
+}
+
+func (m *MockStatsService) Close() error {
 	return nil
 }
 
@@ -137,6 +199,8 @@ func setupGinRouter(handler *Handlers) *gin.Engine {
 	authGroup.POST("/api/shorten/batch", handler.ShortenURLBatch)
 	authGroup.GET("/api/user/urls", handler.GetUserURLs)
 	authGroup.DELETE("/api/user/urls", handler.DeleteUserURLs)
+
+	router.GET("/api/internal/stats", handler.GetInternalStats)
 
 	return router
 }
@@ -184,7 +248,7 @@ func TestShortenURL(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			handler := NewHandler(mockService, nil)
+			handler := NewHandler(mockService, nil, nil)
 
 			router := setupGinRouter(handler)
 
@@ -256,7 +320,7 @@ func TestShortenUrlMoke(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService, nil)
+			h := NewHandler(mockService, nil, nil)
 
 			router := setupGinRouter(h)
 
@@ -329,7 +393,7 @@ func TestGetOriginalURL(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService, nil)
+			h := NewHandler(mockService, nil, nil)
 
 			router := setupGinRouter(h)
 
@@ -341,7 +405,6 @@ func TestGetOriginalURL(t *testing.T) {
 			res := w.Result()
 			defer res.Body.Close()
 
-			// Проверка статус кода
 			assert.Equal(t, test.want.statusCode, res.StatusCode)
 
 			if test.want.location != "" {
@@ -412,7 +475,7 @@ func TestShortenJsonURL(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			handler := NewHandler(mockService, nil)
+			handler := NewHandler(mockService, nil, nil)
 
 			router := setupGinRouter(handler)
 
@@ -484,7 +547,7 @@ func TestShortenJsonURLMoke(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService, nil)
+			h := NewHandler(mockService, nil, nil)
 
 			router := setupGinRouter(h)
 
@@ -501,7 +564,6 @@ func TestShortenJsonURLMoke(t *testing.T) {
 			defer res.Body.Close()
 
 			assert.Equal(t, test.want.statusCode, res.StatusCode)
-
 			assert.Equal(t, test.want.contentType, res.Header.Get("Content-Type"))
 
 			bodyBytes, _ := io.ReadAll(res.Body)
@@ -534,7 +596,7 @@ func TestShortenURLBatch_Success(t *testing.T) {
 					"original_url": "https://example.com/page1"
 				},
 				{
-					"correlation_id": "2", 
+					"correlation_id": "2",
 					"original_url": "https://example.com/page2"
 				},
 				{
@@ -558,7 +620,7 @@ func TestShortenURLBatch_Success(t *testing.T) {
 						"short_url": "http://localhost:8080/2_short"
 					},
 					{
-						"correlation_id": "3", 
+						"correlation_id": "3",
 						"short_url": "http://localhost:8080/3_short"
 					}
 				]`,
@@ -592,7 +654,7 @@ func TestShortenURLBatch_Success(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService, nil)
+			h := NewHandler(mockService, nil, nil)
 
 			router := setupGinRouter(h)
 
@@ -614,10 +676,9 @@ func TestShortenURLBatch_Success(t *testing.T) {
 			bodyBytes, _ := io.ReadAll(res.Body)
 			bodyStr := strings.TrimSpace(string(bodyBytes))
 
-			// Для JSON сравниваем нормализованные версии
 			var expected, actual []interface{}
-			json.Unmarshal([]byte(test.want.body), &expected)
-			json.Unmarshal([]byte(bodyStr), &actual)
+			_ = json.Unmarshal([]byte(test.want.body), &expected)
+			_ = json.Unmarshal([]byte(bodyStr), &actual)
 
 			assert.Equal(t, expected, actual)
 		})
@@ -733,7 +794,7 @@ func TestShortenURLBatch_ValidationErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			handler := NewHandler(mockService, nil)
+			handler := NewHandler(mockService, nil, nil)
 
 			router := setupGinRouter(handler)
 
@@ -761,12 +822,6 @@ func TestShortenURLBatch_ValidationErrors(t *testing.T) {
 }
 
 func TestGetUserURLs_NoCookieAndEmpty(t *testing.T) {
-	type want struct {
-		statusCode   int
-		body         string
-		expectCookie bool
-	}
-
 	tests := []struct {
 		name string
 	}{
@@ -777,9 +832,8 @@ func TestGetUserURLs_NoCookieAndEmpty(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// сервис, который возвращает пустой список ссылок
 			mockService := &MockServiceEmptyUserURLs{}
-			h := NewHandler(mockService, nil)
+			h := NewHandler(mockService, nil, nil)
 			router := setupGinRouter(h)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
@@ -790,10 +844,8 @@ func TestGetUserURLs_NoCookieAndEmpty(t *testing.T) {
 			res := w.Result()
 			defer res.Body.Close()
 
-			// Новый пользователь без куки и без ссылок -> 204 No Content
 			assert.Equal(t, http.StatusNoContent, res.StatusCode)
 
-			// При этом сервер должен выдать auth-куку
 			setCookie := res.Header.Get("Set-Cookie")
 			assert.NotEmpty(t, setCookie)
 			assert.Contains(t, setCookie, auth.CookieName()+"=")
@@ -802,12 +854,6 @@ func TestGetUserURLs_NoCookieAndEmpty(t *testing.T) {
 }
 
 func TestGetUserURLs_Success(t *testing.T) {
-	type want struct {
-		statusCode  int
-		body        string
-		contentType string
-	}
-
 	tests := []struct {
 		name string
 	}{
@@ -819,10 +865,9 @@ func TestGetUserURLs_Success(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService, nil)
+			h := NewHandler(mockService, nil, nil)
 			router := setupGinRouter(h)
 
-			// генерируем валидную куку так же, как делает auth
 			_, token, err := auth.GetOrCreateUserIDFromCookie("")
 			assert.NoError(t, err)
 
@@ -846,7 +891,6 @@ func TestGetUserURLs_Success(t *testing.T) {
 
 			bodyStr := strings.TrimSpace(string(bodyBytes))
 
-			// ожидаемый ответ от MockService.FindByUserID
 			expected := `[{"short_url":"http://localhost:8080/1","original_url":"https://example.com/1"}]`
 			assert.JSONEq(t, expected, bodyStr)
 		})
@@ -862,7 +906,7 @@ func TestGetUserURLs_ErrorCases(t *testing.T) {
 	tests := []struct {
 		name       string
 		cookieVal  string
-		useService string // "normal" или "error"
+		useService string
 		want       want
 	}{
 		{
@@ -877,7 +921,6 @@ func TestGetUserURLs_ErrorCases(t *testing.T) {
 		{
 			name:       "internal_error_from_service",
 			useService: "error",
-			// сюда поставим валидную куку внутри теста
 			want: want{
 				statusCode: http.StatusInternalServerError,
 				body:       `{"error":"Internal Server Error"}`,
@@ -891,16 +934,15 @@ func TestGetUserURLs_ErrorCases(t *testing.T) {
 
 			switch test.useService {
 			case "error":
-				h = NewHandler(&MockServiceWithError{}, nil)
+				h = NewHandler(&MockServiceWithError{}, nil, nil)
 			default:
-				h = NewHandler(&MockService{}, nil)
+				h = NewHandler(&MockService{}, nil, nil)
 			}
 
 			router := setupGinRouter(h)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
 
-			// для кейса internal error — генерируем валидную куку
 			if test.useService == "error" {
 				_, token, err := auth.GetOrCreateUserIDFromCookie("")
 				assert.NoError(t, err)
@@ -910,7 +952,6 @@ func TestGetUserURLs_ErrorCases(t *testing.T) {
 				})
 			}
 
-			// для кейса invalid_cookie_value — используем битый токен
 			if test.cookieVal != "" {
 				req.AddCookie(&http.Cookie{
 					Name:  auth.CookieName(),
@@ -966,7 +1007,7 @@ func TestDeleteUserURLs_Success(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService, nil)
+			h := NewHandler(mockService, nil, nil)
 			router := setupGinRouter(h)
 
 			req := httptest.NewRequest(tt.method, "/api/user/urls", strings.NewReader(tt.body))
@@ -1055,7 +1096,7 @@ func TestDeleteUserURLs_ValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockService := &MockService{}
-			h := NewHandler(mockService, nil)
+			h := NewHandler(mockService, nil, nil)
 			router := setupGinRouter(h)
 
 			req := httptest.NewRequest(tt.method, "/api/user/urls", strings.NewReader(tt.body))
@@ -1084,4 +1125,78 @@ func TestDeleteUserURLs_ValidationErrors(t *testing.T) {
 			assert.Equal(t, tt.want.body, bodyStr)
 		})
 	}
+}
+
+func TestGetInternalStats_ForbiddenWhenTrustedSubnetIsNil(t *testing.T) {
+	h := NewHandler(&MockStatsService{}, nil, nil)
+	router := setupGinRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	req.Header.Set("X-Real-IP", "127.0.0.1")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestGetInternalStats_ForbiddenWhenHeaderIPInvalid(t *testing.T) {
+	h := NewHandler(&MockStatsService{}, nil, mustParseCIDR(t, "127.0.0.0/8"))
+	router := setupGinRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	req.Header.Set("X-Real-IP", "not-an-ip")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestGetInternalStats_ForbiddenWhenIPOutsideTrustedSubnet(t *testing.T) {
+	h := NewHandler(&MockStatsService{}, nil, mustParseCIDR(t, "127.0.0.0/8"))
+	router := setupGinRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	req.Header.Set("X-Real-IP", "10.0.0.1")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestGetInternalStats_ServiceError(t *testing.T) {
+	h := NewHandler(&MockStatsService{
+		err: errors.New("stats error"),
+	}, nil, mustParseCIDR(t, "127.0.0.0/8"))
+	router := setupGinRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	req.Header.Set("X-Real-IP", "127.0.0.1")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.JSONEq(t, `{"error":"Internal Server Error"}`, w.Body.String())
+}
+
+func TestGetInternalStats_Success(t *testing.T) {
+	h := NewHandler(&MockStatsService{
+		stats: &model.StatsResponse{
+			URLs:  7,
+			Users: 3,
+		},
+	}, nil, mustParseCIDR(t, "127.0.0.0/8"))
+	router := setupGinRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	req.Header.Set("X-Real-IP", "127.0.0.1")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.JSONEq(t, `{"urls":7,"users":3}`, w.Body.String())
 }

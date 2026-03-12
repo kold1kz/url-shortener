@@ -205,3 +205,17 @@ func (r *PostgresURLRepository) MarkAsDeleted(ctx context.Context, userID string
 
 	return nil
 }
+
+func (r *PostgresURLRepository) GetStats(ctx context.Context) (int, int, error) {
+	var urls int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM urls`).Scan(&urls); err != nil {
+		return 0, 0, fmt.Errorf("count urls: %w", err)
+	}
+
+	var users int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT user_id) FROM urls`).Scan(&users); err != nil {
+		return 0, 0, fmt.Errorf("count users: %w", err)
+	}
+
+	return urls, users, nil
+}

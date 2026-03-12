@@ -20,7 +20,8 @@ type Config struct {
 	AuditURL  string
 	DB        *database.DB
 
-	ConfigFile string
+	ConfigFile    string
+	TrustedSubnet string
 }
 
 type FileConfig struct {
@@ -31,6 +32,7 @@ type FileConfig struct {
 	EnableHTTPS     *bool  `json:"enable_https"`
 	AuditFile       string `json:"audit_file"`
 	AuditURL        string `json:"audit_url"`
+	TrustedSubnet   string `json:"trusted_subnet"`
 }
 
 func Init() *Config {
@@ -50,6 +52,7 @@ func Init() *Config {
 	defHTTPS := false
 	defAuditFile := ""
 	defAuditURL := ""
+	defTrustedSubnet := ""
 
 	if fileCfg != nil {
 		if fileCfg.ServerAddress != "" {
@@ -73,6 +76,9 @@ func Init() *Config {
 		if fileCfg.AuditURL != "" {
 			defAuditURL = fileCfg.AuditURL
 		}
+		if fileCfg.TrustedSubnet != "" {
+			defTrustedSubnet = fileCfg.TrustedSubnet
+		}
 	}
 
 	flag.StringVar(&cfg.ServerAddress, "a", defAddr, "HTTP server address")
@@ -85,6 +91,8 @@ func Init() *Config {
 
 	flag.StringVar(&cfg.ConfigFile, "c", cfg.ConfigFile, "load config from file")
 	flag.StringVar(&cfg.ConfigFile, "config", cfg.ConfigFile, "load config from file")
+
+	flag.StringVar(&cfg.TrustedSubnet, "t", defTrustedSubnet, "load config from file")
 
 	flag.Parse()
 
@@ -145,6 +153,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ENABLE_HTTPS"); v != "" {
 		cfg.EnableHTTPS = true
+	}
+	if v := os.Getenv("TRUSTED_SUBNET"); v != "" {
+		cfg.TrustedSubnet = v
 	}
 }
 

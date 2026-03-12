@@ -54,6 +54,9 @@ type URLService interface {
 
 	// Close завершает фоновые процессы сервиса и освобождает ресурсы.
 	Close() error
+
+	// GetStats возвращает статистику по сокращекнным url и пользователям
+	GetStats(ctx context.Context) (*model.StatsResponse, error)
 }
 
 type deleteRequest struct {
@@ -298,4 +301,16 @@ func (s *urlService) Close() error {
 	}
 	close(s.stopCh)
 	return nil
+}
+
+func (s *urlService) GetStats(ctx context.Context) (*model.StatsResponse, error) {
+	urls, users, err := s.repo.GetStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.StatsResponse{
+		URLs:  urls,
+		Users: users,
+	}, nil
 }
