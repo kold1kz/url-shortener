@@ -21,3 +21,12 @@ vendor/
 # IDEs directories
 .idea
 .vscode
+
+# certs
+.cert/
+*.pem
+
+*.env
+*env
+
+*config.json

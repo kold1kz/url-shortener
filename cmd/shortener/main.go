@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
+	"url-shortener/cmd/certutil"
 	"url-shortener/internal/audit"
 	"url-shortener/internal/config"
 	"url-shortener/internal/handler"
@@ -13,6 +18,7 @@ import (
 	"url-shortener/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 var (
@@ -31,20 +37,19 @@ func na(s string) string {
 func loadConfig() (*config.Config, error) {
 	cfg := config.Init()
 
-	// Проверяем корректность конфигурации
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	return cfg, nil
 }
 
-func buildRepo(cfg *config.Config) (repository.URLRepository, error) {
+func buildRepo(cfg *config.Config, logger *zap.SugaredLogger) (repository.URLRepository, error) {
 	if cfg.DB != nil {
 		postgresRepo, err := repository.NewPostgresURLRepository(cfg.DB.GetDB())
 		if err != nil {
 			return nil, fmt.Errorf("failed to init postgres repository: %w", err)
 		}
-		log.Printf("Using PostgreSQL repository")
+		logger.Infow("using PostgreSQL repository")
 		return postgresRepo, nil
 	}
 
@@ -53,35 +58,32 @@ func buildRepo(cfg *config.Config) (repository.URLRepository, error) {
 		if err != nil {
 			return nil, fmt.Errorf("init file repository (%s): %w", cfg.FileStoragePath, err)
 		}
-		log.Printf("Using file repository: %s", cfg.FileStoragePath)
+		logger.Infow("using file repository", "path", cfg.FileStoragePath)
 		return fileRepo, nil
 	}
 
-	log.Printf("Using in-memory repository")
+	logger.Infow("using in-memory repository")
 	return repository.NewInMemoryURLRepository(), nil
 }
 
-func buildAuditPublisher(cfg *config.Config) *audit.Publisher {
+func buildAuditPublisher(cfg *config.Config, logger *zap.SugaredLogger) *audit.Publisher {
 	pub := audit.NewPublisher()
 
 	if cfg.AuditFile != "" {
 		fs, err := audit.NewFileSink(cfg.AuditFile)
 		if err != nil {
-			log.Printf("Failed to init audit file sink: %v", err)
+			logger.Warnw("failed to init audit file sink", "error", err)
 		} else {
 			pub.AddSink(fs)
-			log.Printf("Audit file enabled: %s", cfg.AuditFile)
+			logger.Infow("audit file enabled", "path", cfg.AuditFile)
 		}
 	}
 
 	if cfg.AuditURL != "" {
 		pub.AddSink(audit.NewHTTPSink(cfg.AuditURL))
-		log.Printf("Audit remote enabled: %s", cfg.AuditURL)
+		logger.Infow("audit remote enabled", "url", cfg.AuditURL)
 	}
 
-	// если ни одного sink нет — можно вернуть nil, чтобы хендлеры не дергали Publish
-	// но тогда нужно уметь в handler.NewHandler принимать nil
-	// Я бы оставил pub даже пустым, если Publish у тебя нооп при 0 sinks.
 	return pub
 }
 
@@ -89,6 +91,7 @@ func main() {
 	fmt.Printf("Build version: %s\n", na(buildVersion))
 	fmt.Printf("Build date: %s\n", na(buildDate))
 	fmt.Printf("Build commit: %s\n", na(buildCommit))
+
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
@@ -98,53 +101,106 @@ func run() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
-		// log.Fatalf("Failed to load config: %v", err)
 	}
 	defer cfg.Close()
 
 	logger := middleware.InitLogger()
 	defer logger.Sync()
 
-	repo, err := buildRepo(cfg)
+	repo, err := buildRepo(cfg, logger)
 	if err != nil {
 		return fmt.Errorf("build repository: %w", err)
-		// log.Fatalf("startup error: %v", err)
 	}
+
 	svc := service.NewURLService(repo, cfg.BaseURL)
 	defer svc.Close()
 
-	auditPub := buildAuditPublisher(cfg)
+	auditPub := buildAuditPublisher(cfg, logger)
 	defer auditPub.Close()
 
 	handlers := handler.NewHandler(svc, auditPub)
 
 	router := gin.Default()
-
 	router.Use(middleware.GzipMiddleware())
 	router.Use(middleware.HTTPLoggerMiddleware(logger))
 
-	// Добавляем авторизацию
 	authGroup := router.Group("/")
 	authGroup.Use(middleware.UserAuth())
 
-	// Регистрируем обработчики
 	authGroup.POST("/", handlers.ShortenURL)
 	authGroup.GET("/:id", handlers.GetOriginalURL)
-	// Регистрируем обработчики JSON
 	authGroup.POST("/api/shorten", handlers.ShortenJSONUrl)
 	authGroup.POST("/api/shorten/batch", handlers.ShortenURLBatch)
-
 	authGroup.GET("/api/user/urls", handlers.GetUserURLs)
 	authGroup.DELETE("/api/user/urls", handlers.DeleteUserURLs)
 
 	pingHandler := handler.NewPingHandler(cfg.DB)
 	router.GET("/ping", pingHandler.Ping)
+
 	pprof.Register(router)
-	// Запуск сервера
-	log.Printf("Server starting on %s", cfg.BaseURL)
-	if err := router.Run(cfg.ServerAddress); err != nil {
-		return fmt.Errorf("server run error: %v", err)
-		// log.Fatalf("server run error: %v", err)
+
+	srv := &http.Server{
+		Addr:    cfg.ServerAddress,
+		Handler: router,
 	}
-	return nil
+
+	errCh := make(chan error, 1)
+
+	if cfg.EnableHTTPS {
+		logger.Infow("server starting with HTTPS", "base_url", cfg.BaseURL, "address", cfg.ServerAddress)
+
+		certPath, keyPath, err := certutil.EnsureCertFiles(certutil.EnsureOptions{
+			CertPath:    "./cert/cert.pem",
+			KeyPath:     "./cert/key.pem",
+			ValidFor:    30 * 24 * time.Hour,
+			RenewBefore: 24 * time.Hour,
+			Hosts:       []string{"localhost", "127.0.0.1", "::1"},
+		})
+		if err != nil {
+			return fmt.Errorf("ensure tls certs: %w", err)
+		}
+
+		go func() {
+			errCh <- srv.ListenAndServeTLS(certPath, keyPath)
+		}()
+	} else {
+		logger.Infow("server starting", "base_url", cfg.BaseURL, "address", cfg.ServerAddress)
+
+		go func() {
+			errCh <- srv.ListenAndServe()
+		}()
+	}
+
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGTERM,
+		syscall.SIGINT,
+		syscall.SIGQUIT,
+	)
+	defer stop()
+
+	select {
+	case <-ctx.Done():
+		logger.Infow("shutdown signal received")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			closeErr := srv.Close()
+			if closeErr != nil {
+				logger.Errorw("forced server close failed", "error", closeErr)
+			}
+			return fmt.Errorf("server shutdown: %w", err)
+		}
+
+		logger.Infow("server stopped gracefully")
+		return nil
+
+	case err := <-errCh:
+		if err == nil || err == http.ErrServerClosed {
+			return nil
+		}
+		return fmt.Errorf("server run error: %w", err)
+	}
 }

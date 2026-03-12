@@ -20,7 +20,7 @@ const marker = "generate:reset"
 
 func main() {
 	if err := run(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "reset generator error:", err)
+		fmt.Fprintln(os.Stderr, "reset generator error:", err)
 	}
 }
 
