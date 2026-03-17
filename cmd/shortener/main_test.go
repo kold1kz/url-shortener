@@ -10,22 +10,32 @@ import (
 
 func TestConfigValidate_OK(t *testing.T) {
 	cfg := &config.Config{
-		ServerAddress: "localhost:8080",
-		BaseURL:       "http://localhost:8080",
+		ServerAddress:     "localhost:8080",
+		BaseURL:           "http://localhost:8080",
+		GRPCServerAddress: "localhost:3200",
 	}
 	require.NoError(t, cfg.Validate())
 }
 
 func TestConfigValidate_Errors(t *testing.T) {
 	cfg := &config.Config{
-		ServerAddress: "",
-		BaseURL:       "http://localhost:8080",
+		ServerAddress:     "",
+		BaseURL:           "http://localhost:8080",
+		GRPCServerAddress: "localhost:3200",
 	}
 	require.Error(t, cfg.Validate())
 
 	cfg = &config.Config{
-		ServerAddress: "localhost:8080",
-		BaseURL:       "",
+		ServerAddress:     "localhost:8080",
+		BaseURL:           "",
+		GRPCServerAddress: "localhost:3200",
+	}
+	require.Error(t, cfg.Validate())
+
+	cfg = &config.Config{
+		ServerAddress:     "localhost:8080",
+		BaseURL:           "http://localhost:8080",
+		GRPCServerAddress: "",
 	}
 	require.Error(t, cfg.Validate())
 }

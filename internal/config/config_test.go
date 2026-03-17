@@ -142,11 +142,12 @@ func TestApplyEnv_All(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	cfg := &Config{
-		ServerAddress: "a",
-		BaseURL:       "b",
+		ServerAddress:     "a",
+		BaseURL:           "b",
+		GRPCServerAddress: "c",
 	}
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("unexpected error")
+		t.Fatalf("unexpected error: %v", err)
 	}
 
 	cfg.ServerAddress = ""
@@ -156,6 +157,12 @@ func TestValidate(t *testing.T) {
 
 	cfg.ServerAddress = "a"
 	cfg.BaseURL = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected error")
+	}
+
+	cfg.BaseURL = "b"
+	cfg.GRPCServerAddress = ""
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error")
 	}
