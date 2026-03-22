@@ -22,6 +22,7 @@ type URLRepository interface {
 	CreateBatch(urls []*model.URL) error
 	FindByUserID(userID string) ([]*model.URL, error)
 	MarkAsDeleted(ctx context.Context, userID string, ids []string) error
+	GetStats(ctx context.Context) (urls int, users int, err error)
 }
 
 // InMemoryURLRepository — in-memory реализация URLRepository.
@@ -130,6 +131,13 @@ func (r *InMemoryURLRepository) MarkAsDeleted(ctx context.Context, userID string
 	}
 
 	return nil
+}
+
+func (r *InMemoryURLRepository) GetStats(ctx context.Context) (int, int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return len(r.data), len(r.userURLs), nil
 }
 
 // FileURLRepository — файловая реализация URLRepository.
@@ -329,4 +337,11 @@ func (r *FileURLRepository) MarkAsDeleted(ctx context.Context, userID string, id
 	}
 
 	return nil
+}
+
+func (r *FileURLRepository) GetStats(ctx context.Context) (int, int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return len(r.data), len(r.userURLs), nil
 }

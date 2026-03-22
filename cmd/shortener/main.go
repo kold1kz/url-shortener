@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,14 +12,19 @@ import (
 	"url-shortener/cmd/certutil"
 	"url-shortener/internal/audit"
 	"url-shortener/internal/config"
+	"url-shortener/internal/grpcserver"
 	"url-shortener/internal/handler"
 	"url-shortener/internal/middleware"
 	"url-shortener/internal/pprof"
 	"url-shortener/internal/repository"
 	"url-shortener/internal/service"
+	pb "url-shortener/proto"
+
+	"google.golang.org/grpc/credentials"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -112,13 +118,22 @@ func run() error {
 		return fmt.Errorf("build repository: %w", err)
 	}
 
-	svc := service.NewURLService(repo, cfg.BaseURL)
-	defer svc.Close()
+	urlSvc := service.NewURLService(repo, cfg.BaseURL)
+	defer urlSvc.Close()
 
 	auditPub := buildAuditPublisher(cfg, logger)
 	defer auditPub.Close()
 
-	handlers := handler.NewHandler(svc, auditPub)
+	var trustedSubnet *net.IPNet
+	if cfg.TrustedSubnet != "" {
+		_, subnet, err := net.ParseCIDR(cfg.TrustedSubnet)
+		if err != nil {
+			return fmt.Errorf("parse trusted subnet: %w", err)
+		}
+		trustedSubnet = subnet
+	}
+
+	handlers := handler.NewHandler(urlSvc, auditPub, trustedSubnet)
 
 	router := gin.Default()
 	router.Use(middleware.GzipMiddleware())
@@ -136,20 +151,21 @@ func run() error {
 
 	pingHandler := handler.NewPingHandler(cfg.DB)
 	router.GET("/ping", pingHandler.Ping)
+	router.GET("/api/internal/stats", handlers.GetInternalStats)
 
 	pprof.Register(router)
 
-	srv := &http.Server{
+	httpSrv := &http.Server{
 		Addr:    cfg.ServerAddress,
 		Handler: router,
 	}
 
-	errCh := make(chan error, 1)
+	httpErrCh := make(chan error, 1)
 
+	// Общие TLS-файлы для HTTP и gRPC
+	var certPath, keyPath string
 	if cfg.EnableHTTPS {
-		logger.Infow("server starting with HTTPS", "base_url", cfg.BaseURL, "address", cfg.ServerAddress)
-
-		certPath, keyPath, err := certutil.EnsureCertFiles(certutil.EnsureOptions{
+		certPath, keyPath, err = certutil.EnsureCertFiles(certutil.EnsureOptions{
 			CertPath:    "./cert/cert.pem",
 			KeyPath:     "./cert/key.pem",
 			ValidFor:    30 * 24 * time.Hour,
@@ -159,15 +175,63 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("ensure tls certs: %w", err)
 		}
+	}
 
+	if cfg.EnableHTTPS {
+		logger.Infow("http server starting with HTTPS", "base_url", cfg.BaseURL, "address", cfg.ServerAddress)
 		go func() {
-			errCh <- srv.ListenAndServeTLS(certPath, keyPath)
+			httpErrCh <- httpSrv.ListenAndServeTLS(certPath, keyPath)
 		}()
 	} else {
-		logger.Infow("server starting", "base_url", cfg.BaseURL, "address", cfg.ServerAddress)
+		logger.Infow("http server starting", "base_url", cfg.BaseURL, "address", cfg.ServerAddress)
+		go func() {
+			httpErrCh <- httpSrv.ListenAndServe()
+		}()
+	}
+
+	var grpcSrv *grpc.Server
+	var grpcErrCh chan error
+
+	if cfg.GRPCServerAddress != "" {
+		if cfg.DB == nil {
+			return fmt.Errorf("grpc login requires database connection")
+		}
+
+		userRepo := repository.NewPostgresUserRepository(cfg.DB.GetDB())
+		loginSvc := service.NewLoginService(userRepo)
+
+		grpcLis, err := net.Listen("tcp", cfg.GRPCServerAddress)
+		if err != nil {
+			return fmt.Errorf("grpc listen: %w", err)
+		}
+
+		if cfg.EnableHTTPS {
+			creds, err := credentials.NewServerTLSFromFile(certPath, keyPath)
+			if err != nil {
+				return fmt.Errorf("grpc tls creds: %w", err)
+			}
+
+			grpcSrv = grpc.NewServer(
+				grpc.Creds(creds),
+				grpc.UnaryInterceptor(grpcserver.AuthInterceptor),
+			)
+			logger.Infow("grpc server starting with TLS", "address", cfg.GRPCServerAddress)
+		} else {
+			grpcSrv = grpc.NewServer(
+				grpc.UnaryInterceptor(grpcserver.AuthInterceptor),
+			)
+			logger.Infow("grpc server starting without TLS", "address", cfg.GRPCServerAddress)
+		}
+
+		pb.RegisterShortenerServiceServer(
+			grpcSrv,
+			grpcserver.NewServer(urlSvc, loginSvc),
+		)
+
+		grpcErrCh = make(chan error, 1)
 
 		go func() {
-			errCh <- srv.ListenAndServe()
+			grpcErrCh <- grpcSrv.Serve(grpcLis)
 		}()
 	}
 
@@ -179,28 +243,41 @@ func run() error {
 	)
 	defer stop()
 
-	select {
-	case <-ctx.Done():
-		logger.Infow("shutdown signal received")
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Infow("shutdown signal received")
 
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			closeErr := srv.Close()
-			if closeErr != nil {
-				logger.Errorw("forced server close failed", "error", closeErr)
+			if grpcSrv != nil {
+				grpcSrv.GracefulStop()
+				logger.Infow("grpc server stopped gracefully")
 			}
-			return fmt.Errorf("server shutdown: %w", err)
-		}
 
-		logger.Infow("server stopped gracefully")
-		return nil
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 
-	case err := <-errCh:
-		if err == nil || err == http.ErrServerClosed {
+			if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+				closeErr := httpSrv.Close()
+				if closeErr != nil {
+					logger.Errorw("forced http server close failed", "error", closeErr)
+				}
+				return fmt.Errorf("http server shutdown: %w", err)
+			}
+
+			logger.Infow("http server stopped gracefully")
 			return nil
+
+		case err := <-httpErrCh:
+			if err == nil || err == http.ErrServerClosed {
+				return nil
+			}
+			return fmt.Errorf("http server run error: %w", err)
+
+		case err := <-grpcErrCh:
+			if err == nil {
+				return nil
+			}
+			return fmt.Errorf("grpc server run error: %w", err)
 		}
-		return fmt.Errorf("server run error: %w", err)
 	}
 }

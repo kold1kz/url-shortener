@@ -9,18 +9,10 @@ import (
 	"testing"
 )
 
-//
-// ===== helpers =====
-//
-
 func resetFlags() {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	flag.CommandLine.SetOutput(os.Stdout)
 }
-
-//
-// ===== detectConfigFile =====
-//
 
 func TestDetectConfigFile_FromEnv(t *testing.T) {
 	t.Setenv("CONFIG", "config_example.json")
@@ -51,10 +43,6 @@ func TestDetectConfigFile_Empty(t *testing.T) {
 		t.Fatalf("expected empty config file path, got %q", got)
 	}
 }
-
-//
-// ===== readFileConfig =====
-//
 
 func TestReadFileConfig_EmptyPath(t *testing.T) {
 	cfg, err := readFileConfig("")
@@ -94,6 +82,7 @@ func TestReadFileConfig_OK(t *testing.T) {
 		ServerAddress: "addr",
 		BaseURL:       "base",
 		EnableHTTPS:   &https,
+		TrustedSubnet: "10.0.0.0/8",
 	}
 
 	data, err := json.Marshal(expectedConfig)
@@ -117,14 +106,13 @@ func TestReadFileConfig_OK(t *testing.T) {
 	if got.BaseURL != expectedConfig.BaseURL {
 		t.Fatalf("unexpected base url: got %q, expected %q", got.BaseURL, expectedConfig.BaseURL)
 	}
+	if got.TrustedSubnet != expectedConfig.TrustedSubnet {
+		t.Fatalf("unexpected trusted subnet: got %q, expected %q", got.TrustedSubnet, expectedConfig.TrustedSubnet)
+	}
 	if got.EnableHTTPS == nil || !*got.EnableHTTPS {
 		t.Fatalf("https not parsed")
 	}
 }
-
-//
-// ===== applyEnv =====
-//
 
 func TestApplyEnv_All(t *testing.T) {
 	cfg := &Config{}
@@ -135,6 +123,7 @@ func TestApplyEnv_All(t *testing.T) {
 	t.Setenv("DATABASE_DSN", "env_dsn")
 	t.Setenv("AUDIT_URL", "env_audit_url")
 	t.Setenv("AUDIT_FILE", "env_audit_file")
+	t.Setenv("TRUSTED_SUBNET", "192.168.0.0/24")
 	t.Setenv("ENABLE_HTTPS", "1")
 
 	applyEnv(cfg)
@@ -145,22 +134,20 @@ func TestApplyEnv_All(t *testing.T) {
 		cfg.DatabaseDSN != "env_dsn" ||
 		cfg.AuditURL != "env_audit_url" ||
 		cfg.AuditFile != "env_audit_file" ||
+		cfg.TrustedSubnet != "192.168.0.0/24" ||
 		!cfg.EnableHTTPS {
 		t.Fatalf("env not applied correctly: %+v", cfg)
 	}
 }
 
-//
-// ===== Validate =====
-//
-
 func TestValidate(t *testing.T) {
 	cfg := &Config{
-		ServerAddress: "a",
-		BaseURL:       "b",
+		ServerAddress:     "a",
+		BaseURL:           "b",
+		GRPCServerAddress: "c",
 	}
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("unexpected error")
+		t.Fatalf("unexpected error: %v", err)
 	}
 
 	cfg.ServerAddress = ""
@@ -173,11 +160,13 @@ func TestValidate(t *testing.T) {
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error")
 	}
-}
 
-//
-// ===== initDB =====
-//
+	cfg.BaseURL = "b"
+	cfg.GRPCServerAddress = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected error")
+	}
+}
 
 func TestInitDB_EmptyDSN(t *testing.T) {
 	cfg := &Config{}
@@ -195,10 +184,6 @@ func TestInitDB_BadDSN(t *testing.T) {
 	}
 }
 
-//
-// ===== Close =====
-//
-
 func TestClose_NoDB(t *testing.T) {
 	cfg := &Config{}
 	if err := cfg.Close(); err != nil {
@@ -206,15 +191,11 @@ func TestClose_NoDB(t *testing.T) {
 	}
 }
 
-//
-// ===== Init (integration) =====
-//
-
 func TestInit_WithJSONAndEnvPriority(t *testing.T) {
 	resetFlags()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "./config_example.json")
+	path := filepath.Join(dir, "config_example.json")
 
 	https := false
 	fileCfg := FileConfig{
@@ -244,5 +225,70 @@ func TestInit_WithJSONAndEnvPriority(t *testing.T) {
 	}
 	if cfg.BaseURL != "json_base" {
 		t.Fatalf("json must apply if no env/flag override, got %q", cfg.BaseURL)
+	}
+}
+
+func TestInit_WithJSONTrustedSubnet(t *testing.T) {
+	resetFlags()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	https := false
+	fileCfg := FileConfig{
+		ServerAddress: "json_addr",
+		BaseURL:       "json_base",
+		EnableHTTPS:   &https,
+		TrustedSubnet: "172.16.0.0/16",
+	}
+
+	data, err := json.Marshal(fileCfg)
+	if err != nil {
+		t.Fatalf("marshal file config: %v", err)
+	}
+
+	err = os.WriteFile(path, data, 0o644)
+	if err != nil {
+		t.Fatalf("write file config: %v", err)
+	}
+
+	os.Args = []string{"app", "-c", path}
+
+	cfg := Init()
+
+	if cfg.TrustedSubnet != "172.16.0.0/16" {
+		t.Fatalf("expected trusted subnet from json, got %q", cfg.TrustedSubnet)
+	}
+}
+
+func TestInit_TrustedSubnet_EnvOverridesJSON(t *testing.T) {
+	resetFlags()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	https := false
+	fileCfg := FileConfig{
+		EnableHTTPS:   &https,
+		TrustedSubnet: "172.16.0.0/16",
+	}
+
+	data, err := json.Marshal(fileCfg)
+	if err != nil {
+		t.Fatalf("marshal file config: %v", err)
+	}
+
+	err = os.WriteFile(path, data, 0o644)
+	if err != nil {
+		t.Fatalf("write file config: %v", err)
+	}
+
+	os.Args = []string{"app", "-c", path}
+	t.Setenv("TRUSTED_SUBNET", "10.10.0.0/24")
+
+	cfg := Init()
+
+	if cfg.TrustedSubnet != "10.10.0.0/24" {
+		t.Fatalf("expected env to override json, got %q", cfg.TrustedSubnet)
 	}
 }

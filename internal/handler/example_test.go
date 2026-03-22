@@ -48,10 +48,16 @@ func (fakeService) FindByUserID(ctx context.Context, userID string) ([]*model.UR
 func (fakeService) DeleteUserURLs(ctx context.Context, userID string, ids []string) error { return nil }
 func (fakeService) Close() error                                                          { return nil }
 
+func (fakeService) GetStats(ctx context.Context) (*model.StatsResponse, error) {
+	return &model.StatsResponse{
+		URLs:  0,
+		Users: 0,
+	}, nil
+}
 func ExampleHandlers_ShortenJSONUrl() {
 	gin.SetMode(gin.TestMode)
 
-	h := handler.NewHandler(fakeService{}, nil)
+	h := handler.NewHandler(fakeService{}, nil, nil)
 
 	r := gin.New()
 	r.POST("/api/shorten", h.ShortenJSONUrl)
@@ -75,7 +81,7 @@ func ExampleHandlers_ShortenJSONUrl() {
 func ExampleHandlers_GetOriginalURL() {
 	gin.SetMode(gin.TestMode)
 
-	h := handler.NewHandler(fakeService{}, nil)
+	h := handler.NewHandler(fakeService{}, nil, nil)
 
 	r := gin.New()
 	r.GET("/:id", h.GetOriginalURL)
@@ -95,7 +101,7 @@ func ExampleHandlers_GetOriginalURL() {
 func ExampleHandlers_GetUserURLs() {
 	gin.SetMode(gin.TestMode)
 
-	h := handler.NewHandler(fakeService{}, nil)
+	h := handler.NewHandler(fakeService{}, nil, nil)
 
 	r := gin.New()
 	r.GET("/api/user/urls", h.GetUserURLs)

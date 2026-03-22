@@ -1,0 +1,49 @@
+edition = "2023";
+
+package shortener;
+
+option go_package = "url-shortener/proto";
+
+import "google/protobuf/empty.proto";
+
+service ShortenerService {
+	rpc ShortenURL (URLShortenRequest) returns (URLShortenResponse);
+	rpc ExpandURL (URLExpandRequest) returns (URLExpandResponse);
+	rpc ListUserURLs (google.protobuf.Empty) returns (UserURLsResponse);
+
+	rpc Login (LoginRequest) returns (LoginResponse);
+}
+
+message URLShortenRequest {
+	string url = 1;
+}
+
+message URLShortenResponse {
+	string result = 1;
+}
+
+message URLExpandRequest {
+	string id = 1;
+}
+
+message URLExpandResponse {
+	string result = 1;
+}
+
+message UserURLsResponse {
+	repeated URLData url = 1;
+}
+
+message URLData {
+	string short_url = 1;
+	string original_url = 2;
+}
+
+message LoginRequest {
+	string username = 1;
+	string password = 2;
+}
+
+message LoginResponse {
+	string token = 1;
+}

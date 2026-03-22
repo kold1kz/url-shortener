@@ -1,5 +1,5 @@
 cover:
-	go test -coverprofile=coverage.out ./...
+	go test -coverprofile=coverage.out $(shell go list ./... | grep -v -E '(/proto|/mocks|/cmd/staticlint|/cmd/workload)')
 	go tool cover -func=coverage.out
 	go tool cover -html=coverage.out
 
@@ -24,3 +24,11 @@ staticlint:
 
 reset:
 	go run ./cmd/reset
+
+proto:
+	protoc \
+      -I . \
+      --go_out=. --go_opt=paths=source_relative \
+      --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+      --go_opt=default_api_level=API_OPAQUE \
+      proto/shortener.proto

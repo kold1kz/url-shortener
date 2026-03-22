@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -19,16 +20,25 @@ import (
 // Экземпляр содержит ссылку на сервисный слой и (опционально) publisher аудита.
 // Если audit publisher равен nil, события аудита не публикуются.
 type Handlers struct {
-	service service.URLService
-	audit   *audit.Publisher
+	service       service.URLService
+	audit         *audit.Publisher
+	trustedSubnet *net.IPNet
 }
 
 // NewHandler создаёт набор HTTP-хендлеров.
 //
 // service — обязательная зависимость (бизнес-логика).
 // auditPub — необязательная зависимость; если nil, аудит отключён.
-func NewHandler(service service.URLService, auditPub *audit.Publisher) *Handlers {
-	return &Handlers{service: service, audit: auditPub}
+func NewHandler(
+	service service.URLService,
+	auditPub *audit.Publisher,
+	trustedSubnet *net.IPNet,
+) *Handlers {
+	return &Handlers{
+		service:       service,
+		audit:         auditPub,
+		trustedSubnet: trustedSubnet,
+	}
 }
 
 // ShortenURL обрабатывает сокращение URL в формате plain text.
@@ -345,4 +355,33 @@ func (h *Handlers) DeleteUserURLs(c *gin.Context) {
 	}
 
 	c.Status(http.StatusAccepted)
+}
+
+func (h *Handlers) GetInternalStats(c *gin.Context) {
+	if h.trustedSubnet == nil {
+		c.Status(http.StatusForbidden)
+		return
+	}
+
+	ipStr := c.GetHeader("X-Real-IP")
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		c.Status(http.StatusForbidden)
+		return
+	}
+
+	if !h.trustedSubnet.Contains(ip) {
+		c.Status(http.StatusForbidden)
+		return
+	}
+
+	stats, err := h.service.GetStats(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": http.StatusText(http.StatusInternalServerError),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
 }

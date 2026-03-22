@@ -111,3 +111,7 @@ func itoa(n int) string {
 	}
 	return string(buf[i:])
 }
+
+func (r *benchRepo) GetStats(ctx context.Context) (int, int, error) {
+	return 0, 0, nil
+}

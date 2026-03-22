@@ -24,6 +24,10 @@ type controlledRepo struct {
 	createErr         error
 	findByUserErr     error
 
+	statsURLs  int
+	statsUsers int
+	statsErr   error
+
 	// observe MarkAsDeleted calls
 	markCalls int64
 	lastMark  struct {
@@ -77,6 +81,16 @@ func (r *controlledRepo) MarkAsDeleted(ctx context.Context, userID string, ids [
 	err := r.markErr
 	r.mu.Unlock()
 	return err
+}
+
+func (r *controlledRepo) GetStats(ctx context.Context) (int, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.statsErr != nil {
+		return 0, 0, r.statsErr
+	}
+	return r.statsURLs, r.statsUsers, nil
 }
 
 func waitUntil(t *testing.T, d time.Duration, cond func() bool) {
@@ -387,5 +401,38 @@ func TestFanInDeleteRequests_StopsOnDone(t *testing.T) {
 	case <-out:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timeout waiting out close")
+	}
+}
+func TestGetStats_Success(t *testing.T) {
+	base := repository.NewInMemoryURLRepository()
+	repo := &controlledRepo{
+		URLRepository: base,
+		statsURLs:     10,
+		statsUsers:    4,
+	}
+
+	svc := NewURLService(repo, "http://b")
+
+	stats, err := svc.GetStats(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if stats.URLs != 10 || stats.Users != 4 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestGetStats_Error(t *testing.T) {
+	base := repository.NewInMemoryURLRepository()
+	repo := &controlledRepo{
+		URLRepository: base,
+		statsErr:      errors.New("stats failed"),
+	}
+
+	svc := NewURLService(repo, "http://b")
+
+	_, err := svc.GetStats(context.Background())
+	if err == nil || err.Error() != "stats failed" {
+		t.Fatalf("expected stats failed error, got %v", err)
 	}
 }

@@ -68,3 +68,11 @@ type UserURLResponse struct {
 	// OriginalURL — исходный URL.
 	OriginalURL string `json:"original_url"`
 }
+
+// StatsResponse описывает статистику,
+// сервиса.
+// generate:reset
+type StatsResponse struct {
+	URLs  int `json:"urls"`  // количество сокращённых URL в сервисе
+	Users int `json:"users"` // количество пользователей в сервисе
+}

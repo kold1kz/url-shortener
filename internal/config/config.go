@@ -10,27 +10,31 @@ import (
 )
 
 type Config struct {
-	ServerAddress   string
-	BaseURL         string
-	FileStoragePath string
-	DatabaseDSN     string
-	EnableHTTPS     bool
+	ServerAddress     string
+	GRPCServerAddress string
+	BaseURL           string
+	FileStoragePath   string
+	DatabaseDSN       string
+	EnableHTTPS       bool
 
 	AuditFile string
 	AuditURL  string
 	DB        *database.DB
 
-	ConfigFile string
+	ConfigFile    string
+	TrustedSubnet string
 }
 
 type FileConfig struct {
-	ServerAddress   string `json:"server_address"`
-	BaseURL         string `json:"base_url"`
-	FileStoragePath string `json:"file_storage_path"`
-	DatabaseDSN     string `json:"database_dsn"`
-	EnableHTTPS     *bool  `json:"enable_https"`
-	AuditFile       string `json:"audit_file"`
-	AuditURL        string `json:"audit_url"`
+	ServerAddress     string `json:"server_address"`
+	GRPCServerAddress string `json:"grpc_server_address"`
+	BaseURL           string `json:"base_url"`
+	FileStoragePath   string `json:"file_storage_path"`
+	DatabaseDSN       string `json:"database_dsn"`
+	EnableHTTPS       *bool  `json:"enable_https"`
+	AuditFile         string `json:"audit_file"`
+	AuditURL          string `json:"audit_url"`
+	TrustedSubnet     string `json:"trusted_subnet"`
 }
 
 func Init() *Config {
@@ -44,16 +48,21 @@ func Init() *Config {
 	}
 
 	defAddr := "localhost:8080"
+	defGRPCAddr := "localhost:3200"
 	defBase := "http://localhost:8080"
 	defFile := "./tmp/shorten_url.json"
 	defDSN := "postgres://root:root@localhost:5433/db"
 	defHTTPS := false
 	defAuditFile := ""
 	defAuditURL := ""
+	defTrustedSubnet := ""
 
 	if fileCfg != nil {
 		if fileCfg.ServerAddress != "" {
 			defAddr = fileCfg.ServerAddress
+		}
+		if fileCfg.GRPCServerAddress != "" {
+			defGRPCAddr = fileCfg.GRPCServerAddress
 		}
 		if fileCfg.BaseURL != "" {
 			defBase = fileCfg.BaseURL
@@ -73,9 +82,13 @@ func Init() *Config {
 		if fileCfg.AuditURL != "" {
 			defAuditURL = fileCfg.AuditURL
 		}
+		if fileCfg.TrustedSubnet != "" {
+			defTrustedSubnet = fileCfg.TrustedSubnet
+		}
 	}
 
 	flag.StringVar(&cfg.ServerAddress, "a", defAddr, "HTTP server address")
+	flag.StringVar(&cfg.GRPCServerAddress, "g", defGRPCAddr, "gRPC server address")
 	flag.StringVar(&cfg.BaseURL, "b", defBase, "Base URL for short links")
 	flag.StringVar(&cfg.FileStoragePath, "f", defFile, "File storage path")
 	flag.StringVar(&cfg.DatabaseDSN, "d", defDSN, "Database DSN")
@@ -86,6 +99,8 @@ func Init() *Config {
 	flag.StringVar(&cfg.ConfigFile, "c", cfg.ConfigFile, "load config from file")
 	flag.StringVar(&cfg.ConfigFile, "config", cfg.ConfigFile, "load config from file")
 
+	flag.StringVar(&cfg.TrustedSubnet, "t", defTrustedSubnet, "load config from file")
+
 	flag.Parse()
 
 	applyEnv(cfg)
@@ -95,7 +110,6 @@ func Init() *Config {
 }
 
 func detectConfigFile() string {
-
 	for i := 0; i < len(os.Args); i++ {
 		if os.Args[i] == "-c" || os.Args[i] == "-config" {
 			if i+1 < len(os.Args) {
@@ -103,9 +117,11 @@ func detectConfigFile() string {
 			}
 		}
 	}
+
 	if p := os.Getenv("CONFIG"); p != "" {
 		return p
 	}
+
 	return ""
 }
 
@@ -113,20 +129,26 @@ func readFileConfig(path string) (*FileConfig, error) {
 	if path == "" {
 		return nil, nil
 	}
+
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("config: read file %q: %w", path, err)
 	}
+
 	var fc FileConfig
 	if err := json.Unmarshal(b, &fc); err != nil {
 		return nil, fmt.Errorf("config: parse json %q: %w", path, err)
 	}
+
 	return &fc, nil
 }
 
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("SERVER_ADDRESS"); v != "" {
 		cfg.ServerAddress = v
+	}
+	if v := os.Getenv("GRPC_SERVER_ADDRESS"); v != "" {
+		cfg.GRPCServerAddress = v
 	}
 	if v := os.Getenv("BASE_URL"); v != "" {
 		cfg.BaseURL = v
@@ -146,11 +168,17 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("ENABLE_HTTPS"); v != "" {
 		cfg.EnableHTTPS = true
 	}
+	if v := os.Getenv("TRUSTED_SUBNET"); v != "" {
+		cfg.TrustedSubnet = v
+	}
 }
 
 func (c *Config) Validate() error {
 	if c.ServerAddress == "" {
 		return fmt.Errorf("server address cannot be empty")
+	}
+	if c.GRPCServerAddress == "" {
+		return fmt.Errorf("grpc server address cannot be empty")
 	}
 	if c.BaseURL == "" {
 		return fmt.Errorf("base URL cannot be empty")

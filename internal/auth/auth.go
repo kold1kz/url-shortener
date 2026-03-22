@@ -102,3 +102,14 @@ func GetUserIDFromCookieStrict(rawCookie string) (string, error) {
 	}
 	return parseToken(rawCookie)
 }
+
+func NewTokenForUserID(userID string) (string, error) {
+	if userID == "" {
+		return "", errors.New("empty user id")
+	}
+	return signUserID(userID)
+}
+
+func ParseToken(token string) (string, error) {
+	return parseToken(token)
+}
